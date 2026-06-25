@@ -12,6 +12,7 @@ HOST_NODE_ADDR_BASE=29600
 num_nodes=1
 job_id_base=7600
 gpus="[0,1,2,3]"
+seed=3407
 
 data=/data
 work_data=data/baseline
@@ -21,6 +22,7 @@ vox1_dir=${work_data}/vox1
 musan_lmdb=/data/musan/lmdb
 rir_lmdb=/data/rirs/lmdb
 
+smoke=true
 num_epochs=3
 num_avg=3
 sample_num_per_epoch=65536
@@ -33,7 +35,7 @@ python_cmd=python
 torchrun_cmd=torchrun
 
 run_id=$(date +%Y%m%d_%H%M%S)
-run_root=exp/aorc_baseline_ablation_${run_id}
+run_root=exp/aorc_baseline_ablation_seed${seed}_${run_id}
 variants_filter=
 
 trials="vox1_O_cleaned.kaldi vox1_E_cleaned.kaldi vox1_H_cleaned.kaldi only_ca5.kaldi only_ca10.kaldi only_ca15.kaldi only_ca20.kaldi vox_ca5.kaldi vox_ca10.kaldi vox_ca15.kaldi vox_ca20.kaldi"
@@ -46,14 +48,21 @@ cmiss=1
 set -e
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 
+if [ "${smoke}" = true ]; then
+  echo "Smoke mode is enabled: this only checks that train/extract/score do not crash."
+  echo "For full experiments, run with --smoke false and a complete --num_epochs value."
+else
+  echo "Full experiment mode: num_epochs=${num_epochs}. Validate CAA with age-gap EER/minDCF buckets."
+fi
+
 variants=(
-  "aorc_off:conf/baseline_resnet34_aorc_off.yaml"
-  "oam:conf/baseline_resnet34_oam.yaml"
+  "baseline:conf/baseline_resnet34_aorc_off.yaml"
   "age_ce:conf/baseline_resnet34_age_ce.yaml"
-  "oam_orc:conf/baseline_resnet34_oam_orc.yaml"
-  "oam_caa:conf/baseline_resnet34_oam_caa.yaml"
-  "aorc_full_wo_oam:conf/baseline_resnet34_aorc_full_wo_oam.yaml"
-  "aorc_full:conf/baseline_resnet34_aorc_full.yaml"
+  "oam_only:conf/baseline_resnet34_oam.yaml"
+  "oam_orc:conf/baseline_resnet34_aorc_oam_orc.yaml"
+  "oam_orc_caa_legacy:conf/baseline_resnet34_aorc_full_legacy.yaml"
+  "oam_orc_caa_x:conf/baseline_resnet34_aorc_caa_x.yaml"
+  "oam_orc_caa_lg:conf/baseline_resnet34_aorc_caa_lg.yaml"
 )
 
 mkdir -p "${run_root}/configs"
@@ -75,17 +84,18 @@ make_config() {
   local template=$1
   local out_config=$2
   local exp_dir=$3
-  ${python_cmd} - "$template" "$out_config" "$exp_dir" "$gpus" "$num_epochs" "$num_avg" "$sample_num_per_epoch" "$batch_size" "$num_workers" "$prefetch_factor" "$log_batch_interval" "${train_dir}/key.list" <<'PY'
+  ${python_cmd} - "$template" "$out_config" "$exp_dir" "$gpus" "$seed" "$num_epochs" "$num_avg" "$sample_num_per_epoch" "$batch_size" "$num_workers" "$prefetch_factor" "$log_batch_interval" "${train_dir}/key.list" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 template, out_config, exp_dir, gpus = sys.argv[1:5]
-num_epochs, num_avg = map(int, sys.argv[5:7])
-sample_num_per_epoch, batch_size, num_workers = map(int, sys.argv[7:10])
-prefetch_factor, log_batch_interval = map(int, sys.argv[10:12])
-key_filter_file = sys.argv[12]
+seed = int(sys.argv[5])
+num_epochs, num_avg = map(int, sys.argv[6:8])
+sample_num_per_epoch, batch_size, num_workers = map(int, sys.argv[8:11])
+prefetch_factor, log_batch_interval = map(int, sys.argv[11:13])
+key_filter_file = sys.argv[13]
 
 with open(template, "r", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
@@ -96,6 +106,7 @@ if not isinstance(gpu_list, list):
 
 cfg["exp_dir"] = exp_dir
 cfg["gpus"] = gpu_list
+cfg["seed"] = seed
 cfg["num_epochs"] = num_epochs
 cfg["num_avg"] = num_avg
 cfg["log_batch_interval"] = log_batch_interval

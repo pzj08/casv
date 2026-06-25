@@ -1,6 +1,6 @@
-### recommended AORC mainline: OAM + ORC. CAA is experimental and disabled.
+### AORC with experimental CAA-LG: large-gap same-speaker positives only.
 
-exp_dir: exp/Baseline-ResNet34-AORC-oam-orc
+exp_dir: exp/Baseline-ResNet34-AORC-CAA-LG
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -89,7 +89,7 @@ aorc_args:
   age_mode: ordinal
   enable_oam: True
   enable_orc: True
-  enable_caa: False
+  enable_caa: True
   ignore_age_index: -1
   lambda_oam: 0.1
   alpha_proxy: 0.1
@@ -104,8 +104,8 @@ aorc_args:
   proxy_loss_type: soft
   proxy_weight_type: sigmoid
   caa_version: v2
-  caa_mode: cross_age_only
-  caa_min_gap: 1
+  caa_mode: large_gap_only
+  caa_min_gap: 2
   caa_eta_max: 2.0
   caa_warmup_epoch: 0
   caa_ramp_epoch: 0

@@ -42,6 +42,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'loss_caa': tnt.meter.AverageValueMeter(),
         'loss_smooth': tnt.meter.AverageValueMeter(),
     }
+    aorc_stat_meters = {}
 
     frontend_type = configs['dataset_args'].get('frontend', 'fbank')
     progress_bar = tqdm(total=epoch_iter,
@@ -145,11 +146,15 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                         age_groups = targets.new_full(targets.shape,
                                                      ignore_index)
                     extra_losses = model.module.compute_aorc_losses(
-                        model_outputs, aorc_speakers, age_groups)
+                        model_outputs, aorc_speakers, age_groups, epoch=epoch)
                     conf = model.module.config
+                    lambda_caa_eff = extra_losses.get(
+                        'stat_caa_lambda_eff',
+                        spk_loss.new_tensor(conf['lambda_caa'])).detach()
                     loss = (loss +
                             conf['lambda_oam'] * extra_losses['loss_oam'] +
-                            conf['lambda_caa'] * extra_losses['loss_caa'] +
+                            float(lambda_caa_eff.item()) *
+                            extra_losses['loss_caa'] +
                             conf['lambda_smooth'] *
                             extra_losses['loss_smooth'])
 
@@ -158,7 +163,12 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
             acc_meter.add(logits.cpu().detach().numpy(), targets.cpu().numpy())
             aorc_meters['loss_spk'].add(spk_loss.item())
             for name, value in extra_losses.items():
-                aorc_meters[name].add(value.item())
+                if name.startswith('stat_'):
+                    if name not in aorc_stat_meters:
+                        aorc_stat_meters[name] = tnt.meter.AverageValueMeter()
+                    aorc_stat_meters[name].add(value.item())
+                elif name in aorc_meters:
+                    aorc_meters[name].add(value.item())
 
             # updata the model
             optimizer.zero_grad()
@@ -204,6 +214,22 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                         msg += ', residual_scale={:.6f}'.format(
                             model.module.residual_scale_value().float().item())
                     logger.info(msg)
+                    if aorc_stat_meters:
+                        selected = [
+                            'stat_proxy_valid_count',
+                            'stat_dir_active',
+                            'stat_dir_num_pairs',
+                            'stat_caa_active',
+                            'stat_caa_num_positive_pairs',
+                            'stat_caa_num_cross_age_positive_pairs',
+                            'stat_caa_num_large_gap_positive_pairs',
+                            'stat_caa_lambda_eff',
+                        ]
+                        stat_msg = 'AORC_DIAG ' + ', '.join([
+                            '{}={:.6f}'.format(k, aorc_stat_meters[k].value()[0])
+                            for k in selected if k in aorc_stat_meters
+                        ])
+                        logger.info(stat_msg)
 
             if (i + 1) == epoch_iter:
                 break

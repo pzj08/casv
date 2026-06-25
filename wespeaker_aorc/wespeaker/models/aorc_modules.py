@@ -6,10 +6,13 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+import warnings
 
 from wespeaker.losses.aorc_losses import CrossAgeAggregationLoss
+from wespeaker.losses.aorc_losses import CrossAgeAggregationLossV2
 from wespeaker.losses.aorc_losses import OrdinalAgeLoss
 from wespeaker.losses.aorc_losses import OrdinalPrototypeLoss
+from wespeaker.losses.aorc_losses import SoftProxyMatchingLoss
 from wespeaker.losses.aorc_losses import SpeakerConditionedDirectionLoss
 
 
@@ -31,8 +34,19 @@ AORC_DEFAULTS = {
     'tau_proxy': 0.1,
     'tau_caa': 0.07,
     'lambda_proto_dist': 1.0,
+    'proxy_loss_type': 'soft',
+    'proxy_weight_type': 'sigmoid',
+    'proxy_include_positive_in_denominator': True,
     'beta_gap': 1.0,
     'gamma_caa': 1.0,
+    'caa_version': 'v2',
+    'caa_mode': 'cross_age_only',
+    'caa_min_gap': 1,
+    'caa_eta_max': 2.0,
+    'caa_warmup_epoch': 0,
+    'caa_ramp_epoch': 0,
+    'log_aorc_diagnostics': True,
+    'aorc_strict_finite_check': True,
     'residual_scale': 1.0,
     'learnable_residual_scale': False,
     'initial_residual_scale': None,
@@ -213,6 +227,13 @@ class AORCWrapper(nn.Module):
             raise ValueError('enable_orc=true requires enable_oam=true')
         if self.enable_caa and not self.enable_oam:
             raise ValueError('enable_caa=true requires enable_oam=true')
+        if (self.enable_orc and config['detach_age_prob_for_residual']
+                and float(config['lambda_oam']) == 0.0):
+            warnings.warn(
+                'enable_orc=true with detach_age_prob_for_residual=true and '
+                'lambda_oam=0 leaves age_distribution weakly supervised; '
+                'residual compensation may be ineffective.',
+                RuntimeWarning)
 
         self.age_head = OrdinalAgeHead(
             input_dim=embed_dim,
@@ -230,24 +251,53 @@ class AORCWrapper(nn.Module):
             eps=self.eps)
         self.loss_ord = OrdinalAgeLoss(self.num_age_groups,
                                        self.ignore_age_index)
-        self.loss_proxy = OrdinalPrototypeLoss(
-            self.num_age_groups,
-            tau=config['tau_proxy'],
-            lambda_proto_dist=config['lambda_proto_dist'],
-            ignore_index=self.ignore_age_index,
-            eps=self.eps)
+        proxy_loss_type = config['proxy_loss_type']
+        if proxy_loss_type == 'legacy':
+            self.loss_proxy = OrdinalPrototypeLoss(
+                self.num_age_groups,
+                tau=config['tau_proxy'],
+                lambda_proto_dist=config['lambda_proto_dist'],
+                ignore_index=self.ignore_age_index,
+                eps=self.eps)
+        elif proxy_loss_type == 'soft':
+            self.loss_proxy = SoftProxyMatchingLoss(
+                self.num_age_groups,
+                tau=config['tau_proxy'],
+                lambda_proto_dist=config['lambda_proto_dist'],
+                ignore_index=self.ignore_age_index,
+                eps=self.eps,
+                weight_type=config['proxy_weight_type'],
+                include_positive_in_denominator=config[
+                    'proxy_include_positive_in_denominator'])
+        else:
+            raise ValueError('unsupported proxy_loss_type: {}'.format(
+                proxy_loss_type))
         self.loss_dir = SpeakerConditionedDirectionLoss(
             self.num_age_groups,
             beta_gap=config['beta_gap'],
             ignore_index=self.ignore_age_index,
             max_pairs=config['max_dir_pairs'],
             eps=self.eps)
-        self.loss_caa = CrossAgeAggregationLoss(
-            self.num_age_groups,
-            tau=config['tau_caa'],
-            gamma_caa=config['gamma_caa'],
-            ignore_index=self.ignore_age_index,
-            eps=self.eps)
+        if config['caa_version'] == 'legacy':
+            self.loss_caa = CrossAgeAggregationLoss(
+                self.num_age_groups,
+                tau=config['tau_caa'],
+                gamma_caa=config['gamma_caa'],
+                ignore_index=self.ignore_age_index,
+                eps=self.eps)
+        elif config['caa_version'] == 'v2':
+            self.loss_caa = CrossAgeAggregationLossV2(
+                self.num_age_groups,
+                tau=config['tau_caa'],
+                gamma_caa=config['gamma_caa'],
+                ignore_index=self.ignore_age_index,
+                mode=config['caa_mode'],
+                min_gap=config['caa_min_gap'],
+                eta_max=config['caa_eta_max'],
+                eps=self.eps)
+        else:
+            raise ValueError('unsupported caa_version: {}'.format(
+                config['caa_version']))
 
     def _extract_embedding(self, outputs):
         return outputs[-1] if isinstance(outputs, tuple) else outputs
@@ -275,7 +325,27 @@ class AORCWrapper(nn.Module):
             **age_outputs,
         }
 
-    def compute_aorc_losses(self, outputs, speakers, age_group):
+    def _stat(self, name, value, ref):
+        if not torch.is_tensor(value):
+            value = ref.new_tensor(float(value))
+        return ('stat_' + name, value.detach())
+
+    def caa_lambda_for_epoch(self, epoch=None):
+        if not self.enable_caa:
+            return 0.0
+        base = float(self.config['lambda_caa'])
+        if epoch is None:
+            return base
+        warmup = int(self.config['caa_warmup_epoch'] or 0)
+        ramp = int(self.config['caa_ramp_epoch'] or 0)
+        if epoch < warmup:
+            return 0.0
+        if ramp > 0 and epoch < warmup + ramp:
+            ramp_step = max(epoch - warmup, 0)
+            return base * float(ramp_step) / float(ramp)
+        return base
+
+    def compute_aorc_losses(self, outputs, speakers, age_group, epoch=None):
         zero = outputs['embedding'].new_zeros(())
         global_speakers = _all_gather_no_grad(speakers)
         global_age_group = _all_gather_no_grad(age_group)
@@ -290,24 +360,37 @@ class AORCWrapper(nn.Module):
             'loss_caa': zero,
             'loss_smooth': zero,
         }
+        diagnostics = {}
         if self.enable_oam:
             if self.age_mode == 'ce':
                 valid = age_group != self.ignore_age_index
                 if valid.sum() > 0:
                     losses['loss_ord'] = F.cross_entropy(
                         outputs['age_logits'][valid], age_group[valid].long())
+                diagnostics['proxy_valid_count'] = valid.sum().to(zero.dtype)
             else:
                 losses['loss_ord'] = self.loss_ord(outputs['rank_logits'],
                                                    age_group)
-                losses['loss_proxy'] = self.loss_proxy(
-                    outputs['age_embedding'], outputs['age_prototypes'],
-                    age_group)
+                proxy_result = self.loss_proxy(
+                    outputs['age_embedding'],
+                    outputs['age_prototypes'],
+                    age_group,
+                    return_stats=True) if isinstance(
+                        self.loss_proxy, SoftProxyMatchingLoss) else (
+                            self.loss_proxy(outputs['age_embedding'],
+                                            outputs['age_prototypes'],
+                                            age_group), {})
+                losses['loss_proxy'], proxy_stats = proxy_result
+                diagnostics.update(proxy_stats)
                 dir_age_embedding = _scale_tensor_gradient(
                     global_age_embedding, _distributed_loss_scale())
-                losses['loss_dir'] = self.loss_dir(dir_age_embedding,
-                                                   outputs['age_prototypes'],
-                                                   global_speakers,
-                                                   global_age_group)
+                losses['loss_dir'], dir_stats = self.loss_dir(
+                    dir_age_embedding,
+                    outputs['age_prototypes'],
+                    global_speakers,
+                    global_age_group,
+                    return_stats=True)
+                diagnostics.update(dir_stats)
             losses['loss_oam'] = (
                 losses['loss_ord'] +
                 self.config['alpha_proxy'] * losses['loss_proxy'] +
@@ -316,10 +399,30 @@ class AORCWrapper(nn.Module):
         if self.enable_orc:
             losses['loss_smooth'] = self.residual.smoothness_loss()
         if self.enable_caa:
-            losses['loss_caa'] = self.loss_caa(global_embedding,
-                                               global_speakers,
-                                               global_age_group)
+            if isinstance(self.loss_caa, CrossAgeAggregationLossV2):
+                losses['loss_caa'], caa_stats = self.loss_caa(
+                    global_embedding,
+                    global_speakers,
+                    global_age_group,
+                    return_stats=True)
+                diagnostics.update(caa_stats)
+            else:
+                losses['loss_caa'] = self.loss_caa(global_embedding,
+                                                   global_speakers,
+                                                   global_age_group)
             losses['loss_caa'] = losses['loss_caa'] * _distributed_loss_scale()
+        diagnostics['caa_lambda_eff'] = zero.new_tensor(
+            self.caa_lambda_for_epoch(epoch))
+        if self.config['aorc_strict_finite_check']:
+            for name, value in losses.items():
+                if not torch.isfinite(value).all():
+                    raise FloatingPointError(
+                        '{} is not finite in AORC loss computation'.format(
+                            name))
+        if self.config['log_aorc_diagnostics']:
+            for name, value in diagnostics.items():
+                stat_name, stat_value = self._stat(name, value, zero)
+                losses[stat_name] = stat_value
         return losses
 
     def residual_scale_value(self):

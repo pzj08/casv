@@ -1,6 +1,6 @@
-### recommended AORC mainline: OAM + ORC. CAA is experimental and disabled.
+### recommended AORC mainline: OAM + ORC.
 
-exp_dir: exp/Baseline-ResNet34-AORC-oam-orc
+exp_dir: exp/Baseline-ResNet34-AORC-OAM-ORC
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -94,13 +94,10 @@ aorc_args:
   lambda_oam: 0.1
   alpha_proxy: 0.1
   beta_dir: 0.05
-  lambda_caa: 0.005
   lambda_smooth: 1.0e-3
   tau_proxy: 0.1
-  tau_caa: 0.10
   lambda_proto_dist: 1.0
   beta_gap: 1.0
-  gamma_caa: 0.5
   proxy_loss_type: soft
   proxy_weight_type: sigmoid
   caa_version: v2
