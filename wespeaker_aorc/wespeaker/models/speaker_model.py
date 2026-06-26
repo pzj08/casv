@@ -34,6 +34,8 @@ def get_speaker_model(model_name: str):
         return getattr(ecapa_tdnn, model_name)
     elif model_name.startswith("ResNet"):
         return getattr(resnet, model_name)
+    elif model_name.startswith("ACSM_ResNet"):
+        return getattr(resnet, model_name)
     elif model_name.startswith("REPVGG"):
         return getattr(repvgg, model_name)
     elif model_name.startswith("CAMPPlus"):

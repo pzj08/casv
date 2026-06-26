@@ -43,6 +43,18 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'loss_smooth': tnt.meter.AverageValueMeter(),
     }
     aorc_stat_meters = {}
+    acsm_meters = {
+        'loss_spk': tnt.meter.AverageValueMeter(),
+        'loss_age': tnt.meter.AverageValueMeter(),
+        'loss_consistency': tnt.meter.AverageValueMeter(),
+        'loss_smooth': tnt.meter.AverageValueMeter(),
+        'loss_path': tnt.meter.AverageValueMeter(),
+        'loss_acsm_total': tnt.meter.AverageValueMeter(),
+        'gate_mean': tnt.meter.AverageValueMeter(),
+        'gate_std': tnt.meter.AverageValueMeter(),
+        'uncertainty_mean': tnt.meter.AverageValueMeter(),
+        'residual_norm': tnt.meter.AverageValueMeter(),
+    }
 
     frontend_type = configs['dataset_args'].get('frontend', 'fbank')
     progress_bar = tqdm(total=epoch_iter,
@@ -93,13 +105,14 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                         bad_ages = age_groups[bad_idx].tolist()
                         rank = dist.get_rank() if dist.is_initialized() else 0
                         logger.error(
-                            'invalid age_group before AORC loss: '
+                            'invalid age_group before age-conditioned loss: '
                             'rank={}, epoch={}, batch={}, num_age_groups={}, '
                             'age_min={}, age_max={}, bad_keys={}, bad_ages={}'.
                             format(rank, epoch, i + 1, module.num_age_groups,
                                    int(age_groups.min()), int(age_groups.max()),
                                    bad_keys, bad_ages))
-                        raise ValueError('invalid age_group before AORC loss')
+                        raise ValueError(
+                            'invalid age_group before age-conditioned loss')
                 age_groups = age_groups.to(device)
             if frontend_type == 'fbank':
                 features = batch['feat']  # (B,T,F)
@@ -139,7 +152,18 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                     spk_loss = criterion(logits, targets)
                 loss = spk_loss
                 extra_losses = {}
+                extra_kind = None
                 if isinstance(model_outputs, dict) and hasattr(
+                        model.module, 'compute_acsm_losses'):
+                    if age_groups is None:
+                        ignore_index = model.module.ignore_age_index
+                        age_groups = targets.new_full(targets.shape,
+                                                     ignore_index)
+                    extra_losses = model.module.compute_acsm_losses(
+                        model_outputs, aorc_speakers, age_groups, epoch=epoch)
+                    loss = loss + extra_losses['loss_acsm_total']
+                    extra_kind = 'ACSM'
+                elif isinstance(model_outputs, dict) and hasattr(
                         model.module, 'compute_aorc_losses'):
                     if age_groups is None:
                         ignore_index = model.module.ignore_age_index
@@ -157,18 +181,25 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                             extra_losses['loss_caa'] +
                             conf['lambda_smooth'] *
                             extra_losses['loss_smooth'])
+                    extra_kind = 'AORC'
 
             # loss, acc
             loss_meter.add(loss.item())
             acc_meter.add(logits.cpu().detach().numpy(), targets.cpu().numpy())
             aorc_meters['loss_spk'].add(spk_loss.item())
-            for name, value in extra_losses.items():
-                if name.startswith('stat_'):
-                    if name not in aorc_stat_meters:
-                        aorc_stat_meters[name] = tnt.meter.AverageValueMeter()
-                    aorc_stat_meters[name].add(value.item())
-                elif name in aorc_meters:
-                    aorc_meters[name].add(value.item())
+            acsm_meters['loss_spk'].add(spk_loss.item())
+            if extra_kind == 'AORC':
+                for name, value in extra_losses.items():
+                    if name.startswith('stat_'):
+                        if name not in aorc_stat_meters:
+                            aorc_stat_meters[name] = tnt.meter.AverageValueMeter()
+                        aorc_stat_meters[name].add(value.item())
+                    elif name in aorc_meters:
+                        aorc_meters[name].add(value.item())
+            elif extra_kind == 'ACSM':
+                for name, value in extra_losses.items():
+                    if name in acsm_meters:
+                        acsm_meters[name].add(value.item())
 
             # updata the model
             optimizer.zero_grad()
@@ -184,7 +215,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                 'lr': '{:.3g}'.format(scheduler.get_lr()),
                 'margin': '{:.3g}'.format(margin_scheduler.get_margin()),
             }
-            if extra_losses:
+            if extra_kind == 'AORC':
                 postfix.update({
                     'spk': '{:.3f}'.format(aorc_meters['loss_spk'].value()[0]),
                     'oam': '{:.3f}'.format(aorc_meters['loss_oam'].value()[0]),
@@ -194,6 +225,18 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                 if hasattr(model.module, 'residual_scale_value'):
                     postfix['r'] = '{:.3g}'.format(
                         model.module.residual_scale_value().float().item())
+            elif extra_kind == 'ACSM':
+                postfix.update({
+                    'spk':
+                    '{:.3f}'.format(acsm_meters['loss_spk'].value()[0]),
+                    'age':
+                    '{:.3f}'.format(acsm_meters['loss_age'].value()[0]),
+                    'acsm':
+                    '{:.3f}'.format(
+                        acsm_meters['loss_acsm_total'].value()[0]),
+                    'gate':
+                    '{:.3f}'.format(acsm_meters['gate_mean'].value()[0]),
+                })
             progress_bar.set_postfix(**postfix)
 
             # log
@@ -205,7 +248,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                            (loss_meter.value()[0], acc_meter.value()[0]),
                            width=10,
                            style='grid'))
-                if extra_losses:
+                if extra_kind == 'AORC':
                     msg = 'AORC ' + ', '.join([
                         '{}={:.6f}'.format(k, v.value()[0])
                         for k, v in aorc_meters.items()
@@ -230,6 +273,12 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                             for k in selected if k in aorc_stat_meters
                         ])
                         logger.info(stat_msg)
+                elif extra_kind == 'ACSM':
+                    msg = 'ACSM ' + ', '.join([
+                        '{}={:.6f}'.format(k, v.value()[0])
+                        for k, v in acsm_meters.items()
+                    ])
+                    logger.info(msg)
 
             if (i + 1) == epoch_iter:
                 break
