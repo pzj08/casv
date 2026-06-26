@@ -61,6 +61,37 @@ The implementation was based on these existing code paths:
 - `PathConsistencyLoss`: optional same-speaker different-age pairwise cosine
   consistency, disabled by default.
 
+## ResNet34_ACSM Construction Closure
+
+The ACSM model entry is `ResNet34_ACSM` in `wespeaker/models/resnet.py`:
+
+```python
+def ResNet34_ACSM(feat_dim,
+                  embed_dim,
+                  pooling_func='TSTP',
+                  two_emb_layer=False,
+                  acsm_args=None):
+    return ResNetACSM(BasicBlock, [3, 4, 6, 3],
+                      feat_dim=feat_dim,
+                      embed_dim=embed_dim,
+                      pooling_func=pooling_func,
+                      two_emb_layer=two_emb_layer,
+                      acsm_args=acsm_args)
+```
+
+`get_speaker_model("ResNet34_ACSM")` resolves through the normal ResNet
+factory branch in `wespeaker/models/speaker_model.py`, so a config containing
+`model: ResNet34_ACSM` is built by the same training path as the official
+WeSpeaker ResNet family. `resnet34_acsm_main.yaml` has been smoke-tested by
+loading the YAML, normalizing `acsm_args` with `get_acsm_config`, constructing
+the returned model class, and forwarding fake `[B, T, F] = [2, 200, 80]`
+features.
+
+ACSM is a structural ResNet34 variant: it subclasses the official `ResNet`,
+keeps the shared stem/layers/pooling/segment layers, and inserts ACSM-specific
+modules in the ResNet forward path. It is not implemented as `AORCWrapper` and
+does not route through the AORC architecture.
+
 ## Losses
 
 `compute_acsm_losses(outputs, speakers, age_groups, epoch)` returns:
@@ -102,6 +133,12 @@ Extraction uses model-predicted `age_posterior` and writes
 `outputs["embedding"]`, the canonical embedding. No oracle test-age path is
 implemented by default. `score.py` is unchanged and still performs cosine
 scoring over extracted embeddings.
+
+During extraction, `wespeaker/bin/extract.py` calls `outputs = model(features)`
+without passing `age_group`. For dict outputs it selects
+`outputs["embedding"]`; therefore ACSM extraction uses the predicted posterior
+from `Stage2AgeObserver` and does not require true test age or trial age
+information.
 
 Evaluation should follow the MIM/Vox-CA protocol. The evaluation embeddings are
 extracted from `examples/voxceleb/v2/data/baseline/vox1`, and scoring uses the
@@ -167,14 +204,49 @@ Recommended config order:
 
 ## Verification Status
 
-This implementation has passed unit tests, a fake-batch forward/backward smoke
-test, and an extraction smoke test with a temporary ACSM checkpoint. The
-fake-batch smoke used features shaped `[4, 200, 80]`, dummy speaker labels, and
-valid age groups; it verified finite losses, finite embeddings, normalized
-`age_posterior`, gate values within `[0, gate_max]`, finite gradients, and
-extraction-style forward without age labels. The extraction smoke used
-`examples/voxceleb/v2/data/baseline/extract_smoke/raw.list` and wrote 8 finite
-256-dimensional normalized embeddings.
+Current verification covers:
+
+- `get_speaker_model("ResNet34_ACSM")` returns the ACSM factory and constructs
+  a real ACSM model from `resnet34_acsm_main.yaml`.
+- `AgeFiLM2d` identity initialization and disabled bypass behavior.
+- `Stage2AgeObserver` posterior shape, normalization, non-negativity, finite
+  ordinal loss, and all-ignore age loss.
+- `OrderedAgeCanonicalizer` reference residual, gate range, normalized output,
+  `canonical_scale=0`, and smooth loss.
+- `PathConsistencyLoss` same-speaker different-age pairs, no-pair zero loss,
+  valid pair count, and ignore-age exclusion.
+- `ResNet34_ACSM` forward without age labels.
+- ACSM speaker-loss plus extra-loss backward pass with gradients on age
+  observer, FiLM, canonicalizer gate, and transition parameters.
+- Extraction-style dict-output handling through `outputs["embedding"]` without
+  passing true age labels.
+- Baseline `ResNet34` still returns its original tuple output.
+
+Commands:
+
+```bash
+cd wespeaker_aorc
+python -m pytest tests/test_aorc.py tests/test_acsm.py -q
+```
+
+In the active `/xmudata/pzj/envs/casv1` environment this command currently
+fails before test execution because `pytest` is not installed:
+`No module named pytest`.
+
+The same test files are `unittest` compatible and were run with:
+
+```bash
+cd wespeaker_aorc
+/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_aorc tests.test_acsm
+```
+
+The fake-batch smoke used features shaped `[4, 200, 80]`, dummy speaker
+labels, and valid age groups; it verified finite losses, finite embeddings,
+normalized `age_posterior`, gate values within `[0, gate_max]`, finite
+gradients, and extraction-style forward without age labels. The extraction
+smoke used `examples/voxceleb/v2/data/baseline/extract_smoke/raw.list` and
+wrote finite 256-dimensional normalized embeddings.
 
 No real EER experiment or full-scale training has been run as part of this
-implementation.
+implementation. Passing these implementation tests does not establish
+performance improvement.

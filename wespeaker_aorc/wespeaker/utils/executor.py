@@ -56,9 +56,13 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'residual_norm': tnt.meter.AverageValueMeter(),
         'residual_norm_mean': tnt.meter.AverageValueMeter(),
         'cos_raw_can_mean': tnt.meter.AverageValueMeter(),
+        'raw_can_cosine_mean': tnt.meter.AverageValueMeter(),
         'l2_raw_can_mean': tnt.meter.AverageValueMeter(),
         'path_valid_pair_count': tnt.meter.AverageValueMeter(),
+        'path_nonzero_batch_ratio': tnt.meter.AverageValueMeter(),
     }
+    acsm_seen_batches = 0
+    acsm_path_nonzero_batches = 0
 
     frontend_type = configs['dataset_args'].get('frontend', 'fbank')
     progress_bar = tqdm(total=epoch_iter,
@@ -201,6 +205,13 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                     elif name in aorc_meters:
                         aorc_meters[name].add(value.item())
             elif extra_kind == 'ACSM':
+                acsm_seen_batches += 1
+                path_count = float(
+                    extra_losses['path_valid_pair_count'].detach().item())
+                if path_count > 0.0:
+                    acsm_path_nonzero_batches += 1
+                acsm_meters['path_nonzero_batch_ratio'].add(
+                    1.0 if path_count > 0.0 else 0.0)
                 for name, value in extra_losses.items():
                     if name in acsm_meters:
                         acsm_meters[name].add(value.item())
@@ -299,3 +310,19 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                    (loss_meter.value()[0], acc_meter.value()[0]),
                    width=10,
                    style='grid'))
+        if acsm_seen_batches > 0:
+            ratio = float(acsm_path_nonzero_batches) / float(acsm_seen_batches)
+            logger.info(
+                'ACSM_EPOCH path_nonzero_batch_ratio={:.6f}, '
+                'path_valid_pair_count={:.6f}, loss_path={:.6f}, '
+                'gate_mean={:.6f}, residual_norm_mean={:.6f}, '
+                'raw_can_cosine_mean={:.6f}, loss_age={:.6f}, '
+                'loss_consistency={:.6f}, loss_smooth={:.6f}'.format(
+                    ratio, acsm_meters['path_valid_pair_count'].value()[0],
+                    acsm_meters['loss_path'].value()[0],
+                    acsm_meters['gate_mean'].value()[0],
+                    acsm_meters['residual_norm_mean'].value()[0],
+                    acsm_meters['raw_can_cosine_mean'].value()[0],
+                    acsm_meters['loss_age'].value()[0],
+                    acsm_meters['loss_consistency'].value()[0],
+                    acsm_meters['loss_smooth'].value()[0]))

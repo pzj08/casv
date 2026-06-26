@@ -34,7 +34,9 @@ def _param_stats(model):
     acsm_extra = sum(p.numel() for name, p in model.named_parameters()
                      if name.startswith(('age_observer', 'age_film',
                                          'canonicalizer')))
-    return total, trainable, acsm_extra
+    parammatch_extra = sum(p.numel() for name, p in model.named_parameters()
+                           if name.startswith('param_match'))
+    return total, trainable, acsm_extra, parammatch_extra
 
 
 def _latency(model, device, feat_dim, frames, batch_size, warmup, iters):
@@ -55,7 +57,7 @@ def _latency(model, device, feat_dim, frames, batch_size, warmup, iters):
 
 def _profile(name, configs, args):
     model = _build(configs)
-    total, trainable, acsm_extra = _param_stats(model)
+    total, trainable, acsm_extra, parammatch_extra = _param_stats(model)
     feat_dim = configs['model_args']['feat_dim']
     device = torch.device(args.device if (
         args.device != 'cuda' or torch.cuda.is_available()) else 'cpu')
@@ -67,6 +69,8 @@ def _profile(name, configs, args):
         'total_params': total,
         'trainable_params': trainable,
         'acsm_extra_params': acsm_extra,
+        'parammatch_extra_params': parammatch_extra,
+        'extra_params_over_resnet34': None,
         'flops_or_macs': None,
         'flops_note': 'FLOPs/MACs not computed; no extra dependency is used.',
         'device': str(device),
@@ -83,6 +87,7 @@ def main():
         description='Profile speaker model params and fake-input latency.')
     parser.add_argument('--config', required=True)
     parser.add_argument('--include-baseline', action='store_true')
+    parser.add_argument('--include-parammatch', action='store_true')
     parser.add_argument('--include-aorc', action='store_true')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', type=int, default=4)
@@ -94,16 +99,29 @@ def main():
 
     with open(args.config) as f:
         base = yaml.safe_load(f)
+    baseline_cfg = copy.deepcopy(base)
+    baseline_cfg['model'] = 'ResNet34'
+    baseline_cfg['model_args'].pop('acsm_args', None)
+    baseline_cfg['model_args'].pop('param_match_args', None)
+    baseline_total = _param_stats(_build(baseline_cfg))[0]
+
     reports = [_profile('configured', base, args)]
     if args.include_baseline:
+        reports.append(_profile('resnet34_baseline', baseline_cfg, args))
+    if args.include_parammatch:
         cfg = copy.deepcopy(base)
-        cfg['model'] = 'ResNet34'
+        cfg['model'] = 'ResNet34_ParamMatch'
         cfg['model_args'].pop('acsm_args', None)
-        reports.append(_profile('resnet34_baseline', cfg, args))
+        cfg['model_args'].setdefault('param_match_args', {
+            'bottleneck_dim': 64,
+            'residual_scale': 0.1,
+        })
+        reports.append(_profile('resnet34_parammatch', cfg, args))
     if args.include_aorc:
         cfg = copy.deepcopy(base)
         cfg['model'] = 'ResNet34'
         cfg['model_args'].pop('acsm_args', None)
+        cfg['model_args'].pop('param_match_args', None)
         cfg['aorc_args'] = {
             'enable_oam': True,
             'enable_orc': True,
@@ -111,6 +129,9 @@ def main():
             'num_age_groups': 7,
         }
         reports.append(_profile('resnet34_aorc_oam_orc', cfg, args))
+    for report in reports:
+        report['extra_params_over_resnet34'] = (
+            report['total_params'] - baseline_total)
     text = json.dumps({'profiles': reports}, indent=2, sort_keys=True)
     print(text)
     if args.output_json:

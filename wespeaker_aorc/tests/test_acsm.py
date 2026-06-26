@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import types
@@ -5,6 +6,7 @@ import unittest
 
 import torch
 import torch.nn.functional as F
+import yaml
 
 silero_vad = types.ModuleType('silero_vad')
 silero_vad.load_silero_vad = lambda *args, **kwargs: None
@@ -15,14 +17,59 @@ sys.modules.setdefault('silero_vad', silero_vad)
 from wespeaker.bin.train import _validate_acsm_age_label_config
 from wespeaker.models.acsm_modules import AgeFiLM2d
 from wespeaker.models.acsm_modules import OrderedAgeCanonicalizer
+from wespeaker.models.acsm_modules import PathConsistencyLoss
 from wespeaker.models.acsm_modules import Stage2AgeObserver
 from wespeaker.models.acsm_modules import get_acsm_config
 from wespeaker.models.aorc_modules import AORCWrapper, get_aorc_config
 from wespeaker.models.resnet import ResNet34, ResNet34_ACSM
+from wespeaker.models.resnet import ResNet34_ParamMatch
+from wespeaker.models.speaker_model import get_speaker_model
 from wespeaker.utils.checkpoint import load_checkpoint
 
 
 class ACSMTest(unittest.TestCase):
+
+    def test_get_speaker_model_builds_resnet34_acsm_from_main_config(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(
+            repo_root, 'examples', 'voxceleb', 'v2', 'conf',
+            'resnet34_acsm_main.yaml')
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        model_cls = get_speaker_model(config['model'])
+        self.assertIs(model_cls, ResNet34_ACSM)
+
+        config['model_args']['acsm_args'] = get_acsm_config(config)
+        model = model_cls(**config['model_args'])
+        model.eval()
+        with torch.no_grad():
+            outputs = model(torch.randn(2, 200, 80))
+        self.assertIsInstance(outputs, dict)
+        self.assertEqual(outputs['embedding'].shape, (2, 256))
+        self.assertEqual(outputs['age_posterior'].shape, (2, 7))
+        self.assertTrue(torch.isfinite(outputs['embedding']).all())
+
+    def test_path_ablation_configs_keep_main_hparams(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        expected = {
+            'resnet34_acsm_path000.yaml': 0.0,
+            'resnet34_acsm_path001.yaml': 0.01,
+            'resnet34_acsm_path002.yaml': 0.02,
+        }
+        for filename, lambda_path in expected.items():
+            path = os.path.join(repo_root, 'examples', 'voxceleb', 'v2',
+                                'conf', filename)
+            with open(path, 'r') as f:
+                config = yaml.safe_load(f)
+            acsm = config['model_args']['acsm_args']
+            self.assertEqual(config['model'], 'ResNet34_ACSM')
+            self.assertEqual(acsm['losses']['lambda_path'], lambda_path)
+            self.assertEqual(acsm['losses']['lambda_age'], 0.10)
+            self.assertEqual(acsm['losses']['lambda_consistency'], 0.03)
+            self.assertEqual(acsm['losses']['lambda_smooth'], 1.0e-4)
+            self.assertEqual(acsm['losses']['ramp_epoch'], 3)
+            self.assertEqual(acsm['canonicalizer']['gate_max'], 0.40)
+            self.assertEqual(acsm['canonicalizer']['canonical_scale'], 0.10)
 
     def test_age_film_identity_initialization(self):
         film = AgeFiLM2d(8, 4, film_scale=0.05)
@@ -169,6 +216,25 @@ class ACSMTest(unittest.TestCase):
         self.assertEqual(no_pair['path_valid_pair_count'].item(), 0.0)
         self.assertEqual(no_pair['loss_path'].item(), 0.0)
 
+    def test_path_consistency_loss_valid_pairs_and_ignore_age(self):
+        loss_fn = PathConsistencyLoss(ignore_age_index=-1)
+        embeddings = F.normalize(torch.randn(5, 8), dim=-1)
+        speakers = torch.tensor([0, 0, 0, 1, 1])
+        age_group = torch.tensor([0, 2, -1, 1, 1])
+
+        pairs = loss_fn.valid_pair_indices(speakers, age_group)
+        self.assertEqual(pairs.shape[0], 1)
+        self.assertEqual(loss_fn.valid_pair_count(embeddings, speakers,
+                                                  age_group).item(), 1.0)
+        loss = loss_fn(embeddings, speakers, age_group)
+        self.assertTrue(torch.isfinite(loss))
+
+        no_pair_speakers = torch.arange(5)
+        no_pair = loss_fn(embeddings, no_pair_speakers, age_group)
+        self.assertEqual(no_pair.item(), 0.0)
+        ignored = loss_fn(embeddings, speakers, torch.full((5,), -1))
+        self.assertEqual(ignored.item(), 0.0)
+
     def test_missing_age_label_config(self):
         conf = get_acsm_config({
             'model': 'ResNet34_ACSM',
@@ -206,6 +272,63 @@ class ACSMTest(unittest.TestCase):
         out = wrapped(torch.randn(2, 64, 80))
         self.assertIn('embedding', out)
         self.assertEqual(out['embedding'].shape, (2, 16))
+
+    def test_resnet34_parammatch_constructs_without_age_semantics(self):
+        model_cls = get_speaker_model('ResNet34_ParamMatch')
+        self.assertIs(model_cls, ResNet34_ParamMatch)
+        model = model_cls(feat_dim=80,
+                          embed_dim=16,
+                          param_match_args={
+                              'bottleneck_dim': 8,
+                              'residual_scale': 0.1,
+                          })
+        out = model(torch.randn(2, 200, 80))
+        self.assertIsInstance(out, tuple)
+        self.assertEqual(out[-1].shape, (2, 16))
+        self.assertTrue(torch.isfinite(out[-1]).all())
+        self.assertFalse(hasattr(model, 'age_observer'))
+        self.assertFalse(hasattr(model, 'canonicalizer'))
+
+    def test_resnet34_parammatch_parameter_count_matches_acsm(self):
+        baseline = ResNet34(feat_dim=80, embed_dim=256)
+        acsm = ResNet34_ACSM(feat_dim=80, embed_dim=256)
+        parammatch = ResNet34_ParamMatch(feat_dim=80, embed_dim=256)
+        base_n = sum(p.numel() for p in baseline.parameters())
+        acsm_extra = sum(p.numel() for p in acsm.parameters()) - base_n
+        pm_extra = sum(p.numel() for p in parammatch.parameters()) - base_n
+        self.assertGreater(pm_extra, 0)
+        self.assertGreater(sum(p.numel() for p in parammatch.parameters()),
+                           base_n)
+        self.assertLess(abs(pm_extra - acsm_extra), acsm_extra * 0.25)
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(repo_root, 'examples', 'voxceleb', 'v2',
+                                   'conf', 'resnet34_parammatch.yaml')
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        self.assertEqual(config['model'], 'ResNet34_ParamMatch')
+        self.assertNotIn('acsm_args', config['model_args'])
+        self.assertNotIn('age_label_file', str(config['model_args']))
+
+    def test_extraction_style_forward_needs_no_age_label(self):
+        model = ResNet34_ACSM(feat_dim=80,
+                              embed_dim=16,
+                              acsm_args={
+                                  'num_age_groups': 4,
+                                  'reference_age_group': 1,
+                                  'age_emb_dim': 8,
+                              })
+        model.eval()
+        with torch.no_grad():
+            outputs = model(torch.randn(2, 200, 80))
+        self.assertIsInstance(outputs, dict)
+        self.assertIn('age_posterior', outputs)
+        self.assertTrue(torch.isfinite(outputs['age_posterior']).all())
+
+        embeds = outputs['embedding'] if isinstance(outputs,
+                                                    dict) else outputs[-1]
+        self.assertEqual(embeds.shape, (2, 16))
+        self.assertTrue(torch.isfinite(embeds).all())
 
     def test_resnet34_checkpoint_partial_loads_into_acsm(self):
         baseline = ResNet34(feat_dim=80, embed_dim=16)

@@ -329,5 +329,6 @@ def acsm_diagnostics(outputs, loss_total):
         'residual_norm': _stat(residual_norm.mean(), loss_total),
         'residual_norm_mean': _stat(residual_norm.mean(), loss_total),
         'cos_raw_can_mean': _stat(raw_can_cos.mean(), loss_total),
+        'raw_can_cosine_mean': _stat(raw_can_cos.mean(), loss_total),
         'l2_raw_can_mean': _stat(raw_can_l2.mean(), loss_total),
     }

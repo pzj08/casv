@@ -392,6 +392,64 @@ class ResNetACSM(ResNet):
         return losses
 
 
+class ResNetParamMatch(ResNet):
+    """ResNet variant with non-age extra parameters for ACSM size control."""
+
+    def __init__(self,
+                 block,
+                 num_blocks,
+                 m_channels=32,
+                 feat_dim=40,
+                 embed_dim=128,
+                 pooling_func='TSTP',
+                 two_emb_layer=False,
+                 param_match_args=None):
+        super().__init__(block,
+                         num_blocks,
+                         m_channels=m_channels,
+                         feat_dim=feat_dim,
+                         embed_dim=embed_dim,
+                         pooling_func=pooling_func,
+                         two_emb_layer=two_emb_layer)
+        conf = param_match_args or {}
+        bottleneck_dim = int(conf.get('bottleneck_dim', 64))
+        self.param_match_residual_scale = float(conf.get('residual_scale',
+                                                        0.1))
+        self.param_match_token = nn.Parameter(torch.zeros(embed_dim))
+        self.param_match_norm = nn.LayerNorm(embed_dim)
+        self.param_match_residual = nn.Sequential(
+            nn.Linear(embed_dim, bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(bottleneck_dim, embed_dim),
+        )
+        self.param_match_gate = nn.Sequential(
+            nn.Linear(embed_dim, bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(bottleneck_dim, 1),
+        )
+
+    def _embedding(self, stats):
+        embed_a = self.seg_1(stats)
+        if self.two_emb_layer:
+            out = F.relu(embed_a)
+            out = self.seg_bn_1(out)
+            raw = self.seg_2(out)
+            first = embed_a
+        else:
+            raw = embed_a
+            first = raw.new_zeros(())
+        cond = self.param_match_norm(raw + self.param_match_token.view(1, -1))
+        residual = self.param_match_residual(cond)
+        gate = torch.sigmoid(self.param_match_gate(cond))
+        embedding = raw + self.param_match_residual_scale * gate * residual
+        return first, embedding
+
+    def forward(self, x):
+        out = self._get_frame_level_feat(x)
+        stats = self.pool(out)
+        return self._embedding(stats)
+
+
 def ResNet18(feat_dim, embed_dim, pooling_func='TSTP', two_emb_layer=False):
     return ResNet(BasicBlock, [2, 2, 2, 2],
                   feat_dim=feat_dim,
@@ -431,6 +489,19 @@ def ACSM_ResNet34(feat_dim,
                          pooling_func=pooling_func,
                          two_emb_layer=two_emb_layer,
                          acsm_args=acsm_args)
+
+
+def ResNet34_ParamMatch(feat_dim,
+                        embed_dim,
+                        pooling_func='TSTP',
+                        two_emb_layer=False,
+                        param_match_args=None):
+    return ResNetParamMatch(BasicBlock, [3, 4, 6, 3],
+                            feat_dim=feat_dim,
+                            embed_dim=embed_dim,
+                            pooling_func=pooling_func,
+                            two_emb_layer=two_emb_layer,
+                            param_match_args=param_match_args)
 
 
 def ResNet50(feat_dim, embed_dim, pooling_func='TSTP', two_emb_layer=False):
