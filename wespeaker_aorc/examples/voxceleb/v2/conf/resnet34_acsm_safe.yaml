@@ -1,8 +1,9 @@
-### ACSM-Net structural ResNet34 variant.
-### Uses Vox-CA floating age values and converts them to age groups by
-### MIM/Vox-CA bins.
+### ACSM safe configuration.
+### Conservative canonicalization for protecting ordinary speaker verification:
+### smaller FiLM scale, smaller gate, smaller canonical residual, stronger
+### raw/canonical consistency.
 
-exp_dir: exp/ACSM-ResNet34-TSTP-emb256-fbank80
+exp_dir: exp/ACSM-ResNet34-safe-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -67,17 +68,17 @@ model_args:
     film:
       enabled: true
       stages: ["layer3", "layer4"]
-      film_scale: 0.05
+      film_scale: 0.02
     canonicalizer:
       enabled: true
-      canonical_scale: 0.1
+      canonical_scale: 0.05
       learnable_canonical_scale: false
-      gate_max: 0.5
+      gate_max: 0.3
       gate_init_bias: -2.0
       transition_init_std: 0.005
     losses:
       lambda_age: 0.1
-      lambda_consistency: 0.02
+      lambda_consistency: 0.05
       lambda_smooth: 1.0e-4
       lambda_path: 0.0
       ramp_epoch: 2

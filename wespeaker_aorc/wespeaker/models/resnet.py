@@ -348,6 +348,8 @@ class ResNetACSM(ResNet):
             'loss_smooth': zero,
             'loss_path': zero,
         }
+        losses['path_valid_pair_count'] = self.path_loss.valid_pair_count(
+            outputs['embedding'], speakers, age_groups)
 
         if float(loss_conf.get('lambda_age', 0.0)) > 0.0:
             losses['loss_age'] = self.age_observer.ordinal_loss(

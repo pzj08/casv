@@ -54,6 +54,10 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'gate_std': tnt.meter.AverageValueMeter(),
         'uncertainty_mean': tnt.meter.AverageValueMeter(),
         'residual_norm': tnt.meter.AverageValueMeter(),
+        'residual_norm_mean': tnt.meter.AverageValueMeter(),
+        'cos_raw_can_mean': tnt.meter.AverageValueMeter(),
+        'l2_raw_can_mean': tnt.meter.AverageValueMeter(),
+        'path_valid_pair_count': tnt.meter.AverageValueMeter(),
     }
 
     frontend_type = configs['dataset_args'].get('frontend', 'fbank')
@@ -236,6 +240,9 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                         acsm_meters['loss_acsm_total'].value()[0]),
                     'gate':
                     '{:.3f}'.format(acsm_meters['gate_mean'].value()[0]),
+                    'path_pairs':
+                    '{:.1f}'.format(
+                        acsm_meters['path_valid_pair_count'].value()[0]),
                 })
             progress_bar.set_postfix(**postfix)
 

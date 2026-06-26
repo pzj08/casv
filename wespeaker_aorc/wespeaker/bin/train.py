@@ -17,6 +17,7 @@ import os
 import re
 import math
 import warnings
+import subprocess
 from pprint import pformat
 
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -114,6 +115,58 @@ def _validate_acsm_age_label_config(acsm_conf):
         raise ValueError(
             'ACSM lambda_age/lambda_path is enabled but age_label_file is missing'
         )
+
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'y')
+    return bool(value)
+
+
+def _git_commit_hash():
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return 'unknown'
+
+
+def _experiment_manifest(configs, acsm_conf=None):
+    manifest = {
+        'git_commit': _git_commit_hash(),
+        'seed': configs.get('seed'),
+        'model': configs.get('model'),
+        'model_init': configs.get('model_init'),
+        'checkpoint': configs.get('checkpoint'),
+        'train_data': configs.get('train_data'),
+        'train_label': configs.get('train_label'),
+        'key_filter_file': configs.get('key_filter_file'),
+        'exp_dir': configs.get('exp_dir'),
+        'score_path': None,
+        'metric_path': None,
+    }
+    if acsm_conf is not None:
+        losses = acsm_conf.get('losses', {})
+        manifest['acsm'] = {
+            'age_label_file':
+            acsm_conf.get('age_label_file'),
+            'num_age_groups':
+            acsm_conf.get('num_age_groups'),
+            'reference_age_group':
+            acsm_conf.get('reference_age_group'),
+            'lambda_age':
+            losses.get('lambda_age'),
+            'lambda_consistency':
+            losses.get('lambda_consistency'),
+            'lambda_smooth':
+            losses.get('lambda_smooth'),
+            'lambda_path':
+            losses.get('lambda_path'),
+        }
+    return manifest
 
 
 def train(config='conf/config.yaml', **kwargs):
@@ -265,7 +318,13 @@ def train(config='conf/config.yaml', **kwargs):
     # For model_init, only frontend and speaker model are needed !!!
     if configs['model_init'] is not None:
         logger.info('Load initial model from {}'.format(configs['model_init']))
-        load_checkpoint(model, configs['model_init'])
+        model_init_strict = _as_bool(configs.get('model_init_strict', False))
+        load_checkpoint(model,
+                        configs['model_init'],
+                        strict=model_init_strict,
+                        allow_acsm_partial=use_acsm
+                        and not model_init_strict,
+                        logger=logger)
     elif checkpoint is None:
         logger.info('Train model from scratch ...')
     if use_aorc:
@@ -361,6 +420,13 @@ def train(config='conf/config.yaml', **kwargs):
         with open(saved_config_path, 'w') as fout:
             data = yaml.dump(configs)
             fout.write(data)
+        manifest_path = os.path.join(configs['exp_dir'],
+                                     'experiment_manifest.yaml')
+        with open(manifest_path, 'w') as fout:
+            yaml.safe_dump(_experiment_manifest(
+                configs, acsm_conf if use_acsm else None),
+                           fout,
+                           sort_keys=False)
 
     # training
     dist.barrier(device_ids=[gpu])  # synchronize here

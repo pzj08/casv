@@ -1,8 +1,10 @@
-### ACSM-Net structural ResNet34 variant.
-### Uses Vox-CA floating age values and converts them to age groups by
-### MIM/Vox-CA bins.
+### ACSM main-paper candidate configuration.
+### This is the first-round main experimental candidate, not the most
+### conservative safe setting. It enables weak same-speaker different-age path
+### consistency to support the canonical trajectory claim, and must still be
+### compared against a lambda_path=0 configuration in real ablation experiments.
 
-exp_dir: exp/ACSM-ResNet34-TSTP-emb256-fbank80
+exp_dir: exp/ACSM-ResNet34-main-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -70,17 +72,17 @@ model_args:
       film_scale: 0.05
     canonicalizer:
       enabled: true
-      canonical_scale: 0.1
+      canonical_scale: 0.10
       learnable_canonical_scale: false
-      gate_max: 0.5
+      gate_max: 0.40
       gate_init_bias: -2.0
       transition_init_std: 0.005
     losses:
-      lambda_age: 0.1
-      lambda_consistency: 0.02
+      lambda_age: 0.10
+      lambda_consistency: 0.03
       lambda_smooth: 1.0e-4
-      lambda_path: 0.0
-      ramp_epoch: 2
+      lambda_path: 0.01
+      ramp_epoch: 3
     consistency:
       mode: embedding
       small_age_gap: 1

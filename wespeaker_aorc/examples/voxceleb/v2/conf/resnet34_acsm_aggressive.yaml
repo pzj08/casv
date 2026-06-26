@@ -1,8 +1,8 @@
-### ACSM-Net structural ResNet34 variant.
-### Uses Vox-CA floating age values and converts them to age groups by
-### MIM/Vox-CA bins.
+### ACSM aggressive exploration configuration.
+### Larger canonical residual and weak path consistency for probing cross-age
+### gains. Must be checked against ordinary SV degradation.
 
-exp_dir: exp/ACSM-ResNet34-TSTP-emb256-fbank80
+exp_dir: exp/ACSM-ResNet34-aggressive-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -70,7 +70,7 @@ model_args:
       film_scale: 0.05
     canonicalizer:
       enabled: true
-      canonical_scale: 0.1
+      canonical_scale: 0.15
       learnable_canonical_scale: false
       gate_max: 0.5
       gate_init_bias: -2.0
@@ -79,7 +79,7 @@ model_args:
       lambda_age: 0.1
       lambda_consistency: 0.02
       lambda_smooth: 1.0e-4
-      lambda_path: 0.0
+      lambda_path: 0.01
       ramp_epoch: 2
     consistency:
       mode: embedding

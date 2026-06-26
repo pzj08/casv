@@ -276,15 +276,18 @@ class PathConsistencyLoss(nn.Module):
         self.ignore_age_index = ignore_age_index
         self.eps = eps
 
-    def forward(self, embeddings, speakers, age_group):
+    def valid_pair_indices(self, speakers, age_group):
         valid_age = age_group != self.ignore_age_index
         same_spk = speakers.view(-1, 1) == speakers.view(1, -1)
         diff_age = age_group.view(-1, 1) != age_group.view(1, -1)
         both_valid = valid_age.view(-1, 1) & valid_age.view(1, -1)
         upper = torch.triu(torch.ones_like(same_spk, dtype=torch.bool),
                            diagonal=1)
-        pairs = (same_spk & diff_age & both_valid & upper).nonzero(
+        return (same_spk & diff_age & both_valid & upper).nonzero(
             as_tuple=False)
+
+    def forward(self, embeddings, speakers, age_group):
+        pairs = self.valid_pair_indices(speakers, age_group)
         if pairs.numel() == 0:
             return _zero_like(embeddings)
         i, j = pairs[:, 0], pairs[:, 1]
@@ -293,6 +296,10 @@ class PathConsistencyLoss(nn.Module):
                                      dim=-1,
                                      eps=self.eps)
         return (1.0 - cosine).mean()
+
+    def valid_pair_count(self, embeddings, speakers, age_group):
+        return embeddings.new_tensor(
+            float(self.valid_pair_indices(speakers, age_group).size(0)))
 
 
 def acsm_warmup_scale(epoch, ramp_epoch):
@@ -308,10 +315,19 @@ def acsm_warmup_scale(epoch, ramp_epoch):
 
 
 def acsm_diagnostics(outputs, loss_total):
+    raw_norm = F.normalize(outputs['raw_embedding'].detach(),
+                           dim=-1,
+                           eps=1.0e-12)
+    can_norm = F.normalize(outputs['embedding'], dim=-1, eps=1.0e-12)
+    raw_can_cos = (raw_norm * can_norm).sum(dim=-1)
+    raw_can_l2 = (can_norm - raw_norm).norm(dim=-1)
+    residual_norm = outputs['canonical_residual'].norm(dim=-1)
     return {
         'gate_mean': _stat(outputs['gate'].mean(), loss_total),
         'gate_std': _stat(outputs['gate'].std(unbiased=False), loss_total),
         'uncertainty_mean': _stat(outputs['uncertainty'].mean(), loss_total),
-        'residual_norm': _stat(outputs['canonical_residual'].norm(dim=-1).mean(),
-                               loss_total),
+        'residual_norm': _stat(residual_norm.mean(), loss_total),
+        'residual_norm_mean': _stat(residual_norm.mean(), loss_total),
+        'cos_raw_can_mean': _stat(raw_can_cos.mean(), loss_total),
+        'l2_raw_can_mean': _stat(raw_can_l2.mean(), loss_total),
     }

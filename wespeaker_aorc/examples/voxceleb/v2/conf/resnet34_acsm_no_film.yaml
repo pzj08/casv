@@ -1,8 +1,8 @@
-### ACSM-Net structural ResNet34 variant.
-### Uses Vox-CA floating age values and converts them to age groups by
-### MIM/Vox-CA bins.
+### ACSM ablation: no AgeFiLM.
+### Disables layer3/layer4 age FiLM while keeping age observer and
+### canonicalizer active.
 
-exp_dir: exp/ACSM-ResNet34-TSTP-emb256-fbank80
+exp_dir: exp/ACSM-ResNet34-no-film-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -65,7 +65,7 @@ model_args:
     age_observer_stage: layer2
     age_emb_dim: 128
     film:
-      enabled: true
+      enabled: false
       stages: ["layer3", "layer4"]
       film_scale: 0.05
     canonicalizer:

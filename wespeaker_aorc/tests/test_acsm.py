@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import types
 import unittest
 
@@ -18,6 +19,7 @@ from wespeaker.models.acsm_modules import Stage2AgeObserver
 from wespeaker.models.acsm_modules import get_acsm_config
 from wespeaker.models.aorc_modules import AORCWrapper, get_aorc_config
 from wespeaker.models.resnet import ResNet34, ResNet34_ACSM
+from wespeaker.utils.checkpoint import load_checkpoint
 
 
 class ACSMTest(unittest.TestCase):
@@ -45,6 +47,7 @@ class ACSMTest(unittest.TestCase):
                            torch.ones(4),
                            atol=1e-5))
         self.assertTrue(torch.isfinite(out['age_posterior']).all())
+        self.assertTrue((out['age_posterior'] >= 0.0).all())
 
         age_group = torch.tensor([0, 1, 3, -1])
         loss = observer.ordinal_loss(out['rank_logits'], age_group)
@@ -60,6 +63,8 @@ class ACSMTest(unittest.TestCase):
         out = canon(e_obs, q_age)
         self.assertEqual(out['embedding'].shape, e_obs.shape)
         self.assertEqual(out['gate'].shape, (4, 1))
+        self.assertGreaterEqual(out['gate'].min().item(), -1e-6)
+        self.assertLessEqual(out['gate'].max().item(), 0.5 + 1e-6)
         self.assertTrue(torch.isfinite(out['transition_smooth_loss']))
         self.assertTrue(
             torch.allclose(out['embedding'].norm(dim=-1),
@@ -70,6 +75,16 @@ class ACSMTest(unittest.TestCase):
                            torch.zeros(12),
                            atol=1e-7))
         self.assertFalse(torch.isnan(out['embedding']).any())
+
+        identity = OrderedAgeCanonicalizer(5,
+                                           12,
+                                           reference_age_group=2,
+                                           canonical_scale=0.0)
+        identity_out = identity(e_obs, q_age)
+        self.assertTrue(
+            torch.allclose(identity_out['embedding'],
+                           F.normalize(e_obs, dim=-1),
+                           atol=1e-6))
 
     def test_acsm_resnet_forward_without_age_group(self):
         model = ResNet34_ACSM(feat_dim=80,
@@ -82,13 +97,15 @@ class ACSMTest(unittest.TestCase):
         out = model(torch.randn(2, 64, 80))
         for key in [
                 'embedding', 'raw_embedding', 'age_posterior', 'rank_logits',
-                'gate'
+                'gate', 'uncertainty'
         ]:
             self.assertIn(key, out)
         self.assertEqual(out['embedding'].shape, (2, 16))
         self.assertEqual(out['raw_embedding'].shape, (2, 16))
         self.assertEqual(out['age_posterior'].shape, (2, 4))
         self.assertTrue(torch.isfinite(out['embedding']).all())
+        self.assertTrue(torch.isfinite(out['raw_embedding']).all())
+        self.assertTrue(torch.isfinite(out['age_posterior']).all())
 
     def test_acsm_losses_backward(self):
         torch.manual_seed(0)
@@ -117,9 +134,40 @@ class ACSMTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(loss))
         loss.backward()
         self.assertIsNotNone(model.age_observer.score.weight.grad)
+        self.assertIsNotNone(model.age_film3.gamma.weight.grad)
+        self.assertIsNotNone(model.canonicalizer.gate_mlp[-1].weight.grad)
         self.assertIsNotNone(model.canonicalizer.adjacent_transitions.grad)
         self.assertTrue(
             torch.isfinite(model.age_observer.score.weight.grad).all())
+
+        ignored = model.compute_acsm_losses(
+            outputs, speakers, torch.full((4,), -1), epoch=1)
+        self.assertTrue(torch.isfinite(ignored['loss_age']))
+        self.assertEqual(ignored['loss_age'].item(), 0.0)
+
+    def test_path_loss_pair_count(self):
+        model = ResNet34_ACSM(feat_dim=80,
+                              embed_dim=16,
+                              acsm_args={
+                                  'num_age_groups': 4,
+                                  'reference_age_group': 1,
+                                  'age_emb_dim': 8,
+                                  'losses': {
+                                      'lambda_path': 0.01,
+                                      'ramp_epoch': 0,
+                                  },
+                              })
+        outputs = model(torch.randn(4, 80, 80))
+        speakers = torch.tensor([0, 0, 1, 2])
+        age_group = torch.tensor([0, 2, 1, 3])
+        losses = model.compute_acsm_losses(outputs, speakers, age_group)
+        self.assertGreater(losses['path_valid_pair_count'].item(), 0.0)
+        self.assertTrue(torch.isfinite(losses['loss_path']))
+
+        no_pair = model.compute_acsm_losses(outputs, torch.arange(4),
+                                            age_group)
+        self.assertEqual(no_pair['path_valid_pair_count'].item(), 0.0)
+        self.assertEqual(no_pair['loss_path'].item(), 0.0)
 
     def test_missing_age_label_config(self):
         conf = get_acsm_config({
@@ -158,6 +206,35 @@ class ACSMTest(unittest.TestCase):
         out = wrapped(torch.randn(2, 64, 80))
         self.assertIn('embedding', out)
         self.assertEqual(out['embedding'].shape, (2, 16))
+
+    def test_resnet34_checkpoint_partial_loads_into_acsm(self):
+        baseline = ResNet34(feat_dim=80, embed_dim=16)
+        with tempfile.NamedTemporaryFile(suffix='.pt') as tmp:
+            torch.save(baseline.state_dict(), tmp.name)
+            acsm = ResNet34_ACSM(feat_dim=80,
+                                 embed_dim=16,
+                                 acsm_args={
+                                     'num_age_groups': 4,
+                                     'reference_age_group': 1,
+                                     'age_emb_dim': 8,
+                                 })
+            report = load_checkpoint(acsm,
+                                     tmp.name,
+                                     strict=False,
+                                     allow_acsm_partial=True)
+            self.assertGreater(report['missing_acsm_key_count'], 0)
+            self.assertTrue(
+                torch.allclose(acsm.conv1.weight, baseline.conv1.weight))
+
+            strict_acsm = ResNet34_ACSM(feat_dim=80,
+                                        embed_dim=16,
+                                        acsm_args={
+                                            'num_age_groups': 4,
+                                            'reference_age_group': 1,
+                                            'age_emb_dim': 8,
+                                        })
+            with self.assertRaises(RuntimeError):
+                load_checkpoint(strict_acsm, tmp.name, strict=True)
 
 
 if __name__ == '__main__':

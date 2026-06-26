@@ -40,7 +40,14 @@ The implementation was based on these existing code paths:
 - `wespeaker/utils/executor.py`: ACSM extra-loss branch and ACSM diagnostics.
 - `wespeaker/bin/extract.py`: ACSM config normalization before model creation.
 - `examples/voxceleb/v2/conf/resnet34_acsm.yaml`: example config.
+- `examples/voxceleb/v2/conf/resnet34_acsm_*.yaml`: safe, aggressive, path,
+  and ablation configs.
 - `tests/test_acsm.py`: ACSM unit and smoke tests.
+- `tools/diagnose_acsm.py`: canonicalization activity diagnostics.
+- `tools/audit_fair_eval.py`: fair evaluation audit.
+- `tools/audit_data_leakage.py`: train/eval/trial leakage audit.
+- `tools/diagnose_age_pair_coverage.py`: batch path-pair coverage estimator.
+- `tools/profile_model.py`: parameter and latency profiling.
 
 ## Modules
 
@@ -110,6 +117,15 @@ These local trial files match the MIM paper counts. The Vox-CA train set
 `vox2_train_voxca` may be extracted for mean subtraction only; it is not an
 evaluation trial set.
 
+Run the fair-evaluation audit before reporting metrics:
+
+```bash
+python tools/audit_fair_eval.py \
+  --config examples/voxceleb/v2/conf/resnet34_acsm.yaml \
+  --score-py wespeaker/bin/score.py \
+  --trial-list examples/voxceleb/v2/data/baseline/trials/vox1_O_cleaned.kaldi
+```
+
 ## AORC Relationship
 
 AORC remains a separate wrapper and baseline/ablation path. ACSM is not
@@ -125,6 +141,10 @@ together.
 - Optional loss branches should be monitored under DDP for unused parameters.
 - Baseline checkpoint initialization is partial: shared ResNet keys load,
   ACSM-specific keys are newly initialized.
+- If `gate_mean` stays near zero and raw/canonical cosine stays near 1,
+  canonicalization may be near identity.
+- If `lambda_path=0`, canonical trajectory claims require additional ablation;
+  use `resnet34_acsm_path.yaml` for weak path consistency.
 
 ## Recommended Small-Scale Experiment Order
 
@@ -133,6 +153,17 @@ together.
 3. Run a short supervised smoke test with a small age-label file.
 4. Compare baseline-compatible extraction and scoring scripts.
 5. Only then run small EER experiments.
+
+Recommended config order:
+
+1. `resnet34_acsm_safe.yaml`
+2. `resnet34_acsm.yaml`
+3. `resnet34_acsm_path.yaml`
+4. `resnet34_acsm_no_film.yaml`
+5. `resnet34_acsm_no_canonicalizer.yaml`
+6. `resnet34_acsm_no_age_loss.yaml`
+7. `resnet34_acsm_no_consistency.yaml`
+8. `resnet34_acsm_aggressive.yaml`
 
 ## Verification Status
 

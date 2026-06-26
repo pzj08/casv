@@ -1,8 +1,8 @@
-### ACSM-Net structural ResNet34 variant.
-### Uses Vox-CA floating age values and converts them to age groups by
-### MIM/Vox-CA bins.
+### ACSM ablation: no raw/canonical consistency.
+### Disables the ordinary-SV protection loss to measure whether consistency is
+### needed to prevent canonicalization drift.
 
-exp_dir: exp/ACSM-ResNet34-TSTP-emb256-fbank80
+exp_dir: exp/ACSM-ResNet34-no-consistency-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
@@ -77,7 +77,7 @@ model_args:
       transition_init_std: 0.005
     losses:
       lambda_age: 0.1
-      lambda_consistency: 0.02
+      lambda_consistency: 0.0
       lambda_smooth: 1.0e-4
       lambda_path: 0.0
       ramp_epoch: 2
