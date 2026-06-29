@@ -34,10 +34,10 @@ to make the effective training LR exactly `0.1 -> 5e-5`.
 Run from this tree root:
 
 ```bash
-rg -n "AORC|aorc|age_group|enable_oam|enable_orc|enable_caa" wespeaker examples
+rg -n "age_group|acsm_args|ResNet34_ACSM" examples/voxceleb/v2/conf/baseline_resnet34.yaml wespeaker
 ```
 
-The clean baseline must not contain innovation-path hits.
+The clean baseline recipe must not enable ACSM-specific model paths.
 
 Run from `examples/voxceleb/v2`:
 

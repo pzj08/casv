@@ -17,7 +17,7 @@ log_batch_interval: 100  # Log every 100 batches
 # Dataloader arguments
 dataloader_args:
   batch_size: 64
-  num_workers: 16
+  num_workers: 8
   pin_memory: False  # Often False for raw audio
   prefetch_factor: 16  # Adjust based on performance
   drop_last: True

@@ -20,7 +20,6 @@ from wespeaker.models.acsm_modules import OrderedAgeCanonicalizer
 from wespeaker.models.acsm_modules import PathConsistencyLoss
 from wespeaker.models.acsm_modules import Stage2AgeObserver
 from wespeaker.models.acsm_modules import get_acsm_config
-from wespeaker.models.aorc_modules import AORCWrapper, get_aorc_config
 from wespeaker.models.resnet import ResNet34, ResNet34_ACSM
 from wespeaker.models.resnet import ResNet34_ParamMatch
 from wespeaker.models.speaker_model import get_speaker_model
@@ -49,14 +48,18 @@ class ACSMTest(unittest.TestCase):
         self.assertEqual(outputs['age_posterior'].shape, (2, 7))
         self.assertTrue(torch.isfinite(outputs['embedding']).all())
 
-    def test_path_ablation_configs_keep_main_hparams(self):
+    def test_acsm_main_configs_keep_expected_hparams(self):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         expected = {
-            'resnet34_acsm_path000.yaml': 0.0,
-            'resnet34_acsm_path001.yaml': 0.01,
-            'resnet34_acsm_path002.yaml': 0.02,
+            'resnet34_acsm.yaml': (0.10, 0.50, -2.0, 0.005, 0.02, 0.0, 2),
+            'resnet34_acsm_main.yaml': (0.20, 0.50, -1.2, 0.015,
+                                        0.02, 0.02, 3),
+            'resnet34_acsm_main_v3.yaml': (0.25, 0.60, -1.0, 0.02,
+                                           0.015, 0.03, 3),
         }
-        for filename, lambda_path in expected.items():
+        for filename, params in expected.items():
+            canonical_scale, gate_max, gate_init_bias, transition_init_std, \
+                lambda_consistency, lambda_path, ramp_epoch = params
             path = os.path.join(repo_root, 'examples', 'voxceleb', 'v2',
                                 'conf', filename)
             with open(path, 'r') as f:
@@ -65,11 +68,18 @@ class ACSMTest(unittest.TestCase):
             self.assertEqual(config['model'], 'ResNet34_ACSM')
             self.assertEqual(acsm['losses']['lambda_path'], lambda_path)
             self.assertEqual(acsm['losses']['lambda_age'], 0.10)
-            self.assertEqual(acsm['losses']['lambda_consistency'], 0.03)
+            self.assertEqual(acsm['losses']['lambda_consistency'],
+                             lambda_consistency)
             self.assertEqual(acsm['losses']['lambda_smooth'], 1.0e-4)
-            self.assertEqual(acsm['losses']['ramp_epoch'], 3)
-            self.assertEqual(acsm['canonicalizer']['gate_max'], 0.40)
-            self.assertEqual(acsm['canonicalizer']['canonical_scale'], 0.10)
+            self.assertEqual(acsm['losses']['ramp_epoch'], ramp_epoch)
+            self.assertEqual(acsm['canonicalizer']['gate_max'], gate_max)
+            self.assertEqual(acsm['canonicalizer']['gate_init_bias'],
+                             gate_init_bias)
+            self.assertEqual(acsm['canonicalizer']['transition_init_std'],
+                             transition_init_std)
+            self.assertEqual(acsm['canonicalizer']['canonical_scale'],
+                             canonical_scale)
+            self.assertEqual(acsm['consistency']['type'], 'cosine')
 
     def test_age_film_identity_initialization(self):
         film = AgeFiLM2d(8, 4, film_scale=0.05)
@@ -192,6 +202,60 @@ class ACSMTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(ignored['loss_age']))
         self.assertEqual(ignored['loss_age'].item(), 0.0)
 
+    def test_acsm_cosine_consistency_scale_and_legacy_branch(self):
+        base_args = {
+            'num_age_groups': 4,
+            'reference_age_group': 1,
+            'age_emb_dim': 8,
+            'losses': {
+                'lambda_age': 0.0,
+                'lambda_consistency': 0.03,
+                'lambda_smooth': 0.0,
+                'lambda_path': 0.0,
+                'ramp_epoch': 0,
+            },
+        }
+        model = ResNet34_ACSM(feat_dim=80,
+                              embed_dim=16,
+                              acsm_args=dict(base_args,
+                                             consistency={'type': 'cosine'}))
+        outputs = model(torch.randn(4, 80, 80))
+        speakers = torch.tensor([0, 1, 2, 3])
+        age_group = torch.tensor([0, 1, 2, 3])
+        losses = model.compute_acsm_losses(outputs,
+                                           speakers,
+                                           age_group,
+                                           epoch=1)
+        expected = (1.0 - F.cosine_similarity(
+            F.normalize(outputs['embedding'], p=2, dim=-1),
+            F.normalize(outputs['raw_embedding'].detach(), p=2, dim=-1),
+            dim=-1)).clamp_min(0.0).mean()
+        self.assertTrue(
+            torch.allclose(losses['loss_consistency'], expected, atol=1e-6))
+        self.assertGreaterEqual(losses['loss_consistency'].item(), -1e-8)
+        self.assertLessEqual(losses['loss_consistency'].item(), 2.0 + 1e-6)
+        self.assertTrue(
+            torch.allclose(losses['weighted_consistency'],
+                           losses['loss_consistency'] * 0.03))
+
+        legacy = ResNet34_ACSM(
+            feat_dim=80,
+            embed_dim=16,
+            acsm_args=dict(base_args,
+                           consistency={'type': 'raw_l2_sum'}))
+        legacy_outputs = legacy(torch.randn(4, 80, 80))
+        legacy_losses = legacy.compute_acsm_losses(legacy_outputs,
+                                                   speakers,
+                                                   age_group,
+                                                   epoch=1)
+        legacy_expected = (
+            legacy_outputs['embedding'] -
+            legacy_outputs['raw_embedding'].detach()).pow(2).sum(dim=-1).mean()
+        self.assertTrue(
+            torch.allclose(legacy_losses['loss_consistency'],
+                           legacy_expected))
+        self.assertTrue(torch.isfinite(legacy_losses['loss_consistency']))
+
     def test_path_loss_pair_count(self):
         model = ResNet34_ACSM(feat_dim=80,
                               embed_dim=16,
@@ -254,24 +318,11 @@ class ACSMTest(unittest.TestCase):
         conf['losses']['lambda_age'] = 0.0
         _validate_acsm_age_label_config(conf)
 
-    def test_baseline_and_aorc_still_construct(self):
+    def test_baseline_still_constructs(self):
         baseline = ResNet34(feat_dim=80, embed_dim=16)
         base_out = baseline(torch.randn(2, 64, 80))
         self.assertIsInstance(base_out, tuple)
         self.assertEqual(base_out[-1].shape, (2, 16))
-
-        aorc_conf = get_aorc_config({
-            'aorc_args': {
-                'enable_oam': True,
-                'num_age_groups': 4,
-                'age_emb_dim': 8,
-            }
-        })
-        wrapped = AORCWrapper(ResNet34(feat_dim=80, embed_dim=16), 16,
-                              aorc_conf)
-        out = wrapped(torch.randn(2, 64, 80))
-        self.assertIn('embedding', out)
-        self.assertEqual(out['embedding'].shape, (2, 16))
 
     def test_resnet34_parammatch_constructs_without_age_semantics(self):
         model_cls = get_speaker_model('ResNet34_ParamMatch')

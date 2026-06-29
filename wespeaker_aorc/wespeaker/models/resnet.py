@@ -355,10 +355,21 @@ class ResNetACSM(ResNet):
             losses['loss_age'] = self.age_observer.ordinal_loss(
                 outputs['rank_logits'], age_groups)
 
+        cons_conf = self.acsm_config.get('consistency', {})
         e_can = outputs['embedding']
         e_obs = outputs['raw_embedding'].detach()
-        consistency = (e_can - e_obs).pow(2).sum(dim=-1)
-        cons_conf = self.acsm_config.get('consistency', {})
+        consistency_type = cons_conf.get('type', 'cosine')
+        if consistency_type == 'cosine':
+            e_can_n = F.normalize(e_can, p=2, dim=-1)
+            e_obs_n = F.normalize(e_obs, p=2, dim=-1)
+            consistency = (1.0 - F.cosine_similarity(e_can_n,
+                                                      e_obs_n,
+                                                      dim=-1)).clamp_min(0.0)
+        elif consistency_type == 'raw_l2_sum':
+            consistency = (e_can - e_obs).pow(2).sum(dim=-1)
+        else:
+            raise ValueError('unsupported ACSM consistency.type: {}'.format(
+                consistency_type))
         if age_groups is not None and cons_conf.get('only_small_age_gap',
                                                     False):
             valid = age_groups != self.ignore_age_index
@@ -381,6 +392,9 @@ class ResNetACSM(ResNet):
             float(loss_conf.get('lambda_path', 0.0)) * losses['loss_path'])
         loss_total = loss_total * float(warm)
         losses['loss_acsm_total'] = loss_total
+        losses['weighted_consistency'] = (
+            float(loss_conf.get('lambda_consistency', 0.0)) *
+            losses['loss_consistency'] * float(warm))
         if self.acsm_config['diagnostics'].get('log_diagnostics', True):
             losses.update(acsm_diagnostics(outputs, loss_total))
         if self.acsm_config['diagnostics'].get('strict_finite_check', True):

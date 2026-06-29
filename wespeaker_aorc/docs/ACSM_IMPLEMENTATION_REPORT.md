@@ -7,9 +7,8 @@ official WeSpeaker ResNet34. It keeps the original ResNet stem, residual
 layers, pooling, and segment layers intact, then adds age observation,
 age-conditioned FiLM, and ordered age-to-canonical embedding transformation.
 
-This is not an AORC wrapper and does not use AORC as the architectural base.
-The existing `ResNet34`, AORC wrapper, extraction protocol, scoring code, and
-trial-list logic remain compatible.
+The existing `ResNet34`, extraction protocol, scoring code, and trial-list
+logic remain compatible.
 
 ## Inspection Summary
 
@@ -18,9 +17,8 @@ The implementation was based on these existing code paths:
 - `wespeaker/models/resnet.py`: ResNet34 construction, `_get_frame_level_feat`,
   pooling, `seg_1`, and `seg_2`.
 - `wespeaker/models/speaker_model.py`: model-name factory dispatch.
-- `wespeaker/models/aorc_modules.py`: AORC wrapper patterns and reusable
-  ordinal age ideas only.
-- `wespeaker/losses/aorc_losses.py`: reused `OrdinalAgeLoss`.
+- `wespeaker/models/acsm_modules.py`: ACSM-specific ordinal age observer,
+  canonicalizer, and loss helpers.
 - `wespeaker/bin/train.py`: age label loading, dataset construction, model
   init/checkpoint flow.
 - `wespeaker/utils/executor.py`: dict output handling, speaker loss, extra
@@ -35,13 +33,13 @@ The implementation was based on these existing code paths:
   `ACSM_ResNet34`.
 - `wespeaker/models/speaker_model.py`: model factory support for
   `ACSM_ResNet34`.
-- `wespeaker/bin/train.py`: ACSM config normalization, AORC/ACSM mutual
-  exclusion, age-label validation, JIT skip for ACSM.
+- `wespeaker/bin/train.py`: ACSM config normalization, age-label validation,
+  JIT skip for ACSM.
 - `wespeaker/utils/executor.py`: ACSM extra-loss branch and ACSM diagnostics.
 - `wespeaker/bin/extract.py`: ACSM config normalization before model creation.
 - `examples/voxceleb/v2/conf/resnet34_acsm.yaml`: example config.
-- `examples/voxceleb/v2/conf/resnet34_acsm_*.yaml`: safe, aggressive, path,
-  and ablation configs.
+- `examples/voxceleb/v2/conf/resnet34_acsm_main.yaml`: v2 main config.
+- `examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml`: current v3 config.
 - `tests/test_acsm.py`: ACSM unit and smoke tests.
 - `tools/diagnose_acsm.py`: canonicalization activity diagnostics.
 - `tools/audit_fair_eval.py`: fair evaluation audit.
@@ -89,8 +87,7 @@ features.
 
 ACSM is a structural ResNet34 variant: it subclasses the official `ResNet`,
 keeps the shared stem/layers/pooling/segment layers, and inserts ACSM-specific
-modules in the ResNet forward path. It is not implemented as `AORCWrapper` and
-does not route through the AORC architecture.
+modules in the ResNet forward path.
 
 ## Losses
 
@@ -163,11 +160,10 @@ python tools/audit_fair_eval.py \
   --trial-list examples/voxceleb/v2/data/baseline/trials/vox1_O_cleaned.kaldi
 ```
 
-## AORC Relationship
+## Legacy Module Policy
 
-AORC remains a separate wrapper and baseline/ablation path. ACSM is not
-implemented by wrapping `AORCWrapper`, and ACSM/AORC are rejected when enabled
-together.
+Legacy removed modules and configs have been removed from this branch. Current
+experiments are baseline vs ACSM v1/v2/v3.
 
 ## Known Risks
 
@@ -180,8 +176,8 @@ together.
   ACSM-specific keys are newly initialized.
 - If `gate_mean` stays near zero and raw/canonical cosine stays near 1,
   canonicalization may be near identity.
-- If `lambda_path=0`, canonical trajectory claims require additional ablation;
-  use `resnet34_acsm_path.yaml` for weak path consistency.
+- Canonical trajectory claims require effectiveness diagnostics in addition to
+  training losses.
 
 ## Recommended Small-Scale Experiment Order
 
@@ -193,14 +189,9 @@ together.
 
 Recommended config order:
 
-1. `resnet34_acsm_safe.yaml`
-2. `resnet34_acsm.yaml`
-3. `resnet34_acsm_path.yaml`
-4. `resnet34_acsm_no_film.yaml`
-5. `resnet34_acsm_no_canonicalizer.yaml`
-6. `resnet34_acsm_no_age_loss.yaml`
-7. `resnet34_acsm_no_consistency.yaml`
-8. `resnet34_acsm_aggressive.yaml`
+1. `resnet34_acsm.yaml`
+2. `resnet34_acsm_main.yaml`
+3. `resnet34_acsm_main_v3.yaml`
 
 ## Verification Status
 
@@ -226,7 +217,7 @@ Commands:
 
 ```bash
 cd wespeaker_aorc
-python -m pytest tests/test_aorc.py tests/test_acsm.py -q
+python -m pytest tests/test_acsm.py tests/test_acsm_effectiveness_diagnostics.py -q
 ```
 
 In the active `/xmudata/pzj/envs/casv1` environment this command currently
@@ -237,7 +228,7 @@ The same test files are `unittest` compatible and were run with:
 
 ```bash
 cd wespeaker_aorc
-/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_aorc tests.test_acsm
+/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_acsm
 ```
 
 The fake-batch smoke used features shaped `[4, 200, 80]`, dummy speaker

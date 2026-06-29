@@ -122,31 +122,16 @@ effective age trajectory.
 This diagnostic supports claim analysis but is not a substitute for EER,
 minDCF, ordinary SV evaluation, or multi-seed significance checks.
 
-## Lambda Path Ablation
+## Active ACSM Config Set
 
-Configs:
+The active branch retains these ACSM configs:
 
-- `examples/voxceleb/v2/conf/resnet34_acsm_path000.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_path001.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_path002.yaml`
+- `examples/voxceleb/v2/conf/resnet34_acsm.yaml`
+- `examples/voxceleb/v2/conf/resnet34_acsm_main.yaml`
+- `examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml`
 
-The three configs keep the main ACSM candidate settings aligned:
-
-- `lambda_age: 0.10`
-- `lambda_consistency: 0.03`
-- `lambda_smooth: 1.0e-4`
-- `ramp_epoch: 3`
-- `gate_max: 0.40`
-- `canonical_scale: 0.10`
-
-The only intended trajectory-strength difference is:
-
-- `path000`: `lambda_path: 0.0`, trajectory-free control.
-- `path001`: `lambda_path: 0.01`, weak trajectory consistency.
-- `path002`: `lambda_path: 0.02`, stronger trajectory consistency.
-
-Only real experiments can justify treating path consistency as a core
-contribution.
+Only real experiments plus effectiveness diagnostics can justify treating path
+consistency or canonicalization as a useful mechanism.
 
 ## Parameter-Matched Control
 
@@ -187,7 +172,6 @@ python tools/profile_model.py \
   --config examples/voxceleb/v2/conf/resnet34_acsm_main.yaml \
   --include-baseline \
   --include-parammatch \
-  --include-aorc \
   --device cpu \
   --batch-size 1 \
   --frames 80 \

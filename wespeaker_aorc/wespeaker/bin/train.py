@@ -39,8 +39,6 @@ from torch.utils.data import DataLoader
 import wespeaker.utils.schedulers as schedulers
 from wespeaker.dataset.dataset import Dataset
 from wespeaker.models.acsm_modules import acsm_is_enabled, get_acsm_config
-from wespeaker.models.aorc_modules import AORCWrapper
-from wespeaker.models.aorc_modules import aorc_is_enabled, get_aorc_config
 from wespeaker.models.projections import get_projection
 from wespeaker.models.speaker_model import get_speaker_model
 from wespeaker.utils.checkpoint import load_checkpoint, save_checkpoint
@@ -178,13 +176,8 @@ def train(config='conf/config.yaml', **kwargs):
     """
     configs = parse_config_or_kwargs(config, **kwargs)
     checkpoint = configs.get('checkpoint', None)
-    aorc_conf = get_aorc_config(configs)
-    configs['aorc_args'] = aorc_conf
     acsm_conf = get_acsm_config(configs)
-    use_aorc = aorc_is_enabled(configs)
     use_acsm = acsm_is_enabled(configs)
-    if use_aorc and use_acsm:
-        raise ValueError('AORC and ACSM are mutually exclusive; enable one.')
     if use_acsm:
         configs.setdefault('model_args', {})
         configs['model_args']['acsm_args'] = acsm_conf
@@ -246,19 +239,8 @@ def train(config='conf/config.yaml', **kwargs):
     train_utt_spk_list = read_table(train_label)
     spk2id_dict = spk2id(train_utt_spk_list)
     age_labels = None
-    age_ignore_index = aorc_conf['ignore_age_index']
+    age_ignore_index = acsm_conf['ignore_age_index']
     if use_acsm:
-        age_ignore_index = acsm_conf['ignore_age_index']
-    if use_aorc:
-        if aorc_conf['age_label_file'] is None:
-            raise ValueError(
-                'AORC/OAM/ORC/CAA is enabled but age_label_file is missing')
-        age_labels = _load_age_labels(aorc_conf['age_label_file'],
-                                      aorc_conf['age_label_type'],
-                                      aorc_conf['age_bins'],
-                                      aorc_conf['num_age_groups'],
-                                      aorc_conf['ignore_age_index'])
-    elif use_acsm:
         _validate_acsm_age_label_config(acsm_conf)
         if acsm_conf['age_label_file'] is not None:
             age_labels = _load_age_labels(acsm_conf['age_label_file'],
@@ -272,9 +254,7 @@ def train(config='conf/config.yaml', **kwargs):
             len(train_utt_spk_list), len(spk2id_dict)))
         if age_labels is not None:
             logger.info("age label num: {}, num_age_groups: {}".format(
-                len(age_labels),
-                acsm_conf['num_age_groups'] if use_acsm else
-                aorc_conf['num_age_groups']))
+                len(age_labels), acsm_conf['num_age_groups']))
 
     # dataset and dataloader
     train_dataset = Dataset(configs['data_type'],
@@ -327,11 +307,6 @@ def train(config='conf/config.yaml', **kwargs):
                         logger=logger)
     elif checkpoint is None:
         logger.info('Train model from scratch ...')
-    if use_aorc:
-        model = AORCWrapper(model, configs['model_args']['embed_dim'],
-                            aorc_conf)
-        if rank == 0:
-            logger.info('AORC enabled: {}'.format(aorc_conf))
     if use_acsm and rank == 0:
         logger.info('ACSM enabled: {}'.format(acsm_conf))
     # projection layer
@@ -356,7 +331,7 @@ def train(config='conf/config.yaml', **kwargs):
         # !!!IMPORTANT!!!
         # Try to export the model by script, if fails, we should refine
         # the code to satisfy the script export requirements
-        if frontend_type == 'fbank' and not use_aorc and not use_acsm:
+        if frontend_type == 'fbank' and not use_acsm:
             script_model = torch.jit.script(model)
             script_model.save(os.path.join(model_dir, 'init.zip'))
 

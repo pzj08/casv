@@ -82,6 +82,7 @@ model_args:
       lambda_path: 0.0
       ramp_epoch: 2
     consistency:
+      type: cosine
       mode: embedding
       small_age_gap: 1
       only_small_age_gap: false

@@ -5,11 +5,9 @@
 | System | Config | Seed | Checkpoint | Vox-O EER/minDCF | Vox-E | Vox-H | CA5 | CA10 | CA15 | CA20 | Params | Latency | Diagnostics |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ResNet34 baseline | `baseline_resnet34.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | N/A |
-| AORC/OATC | existing AORC config | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | AORC diag |
-| ACSM | `resnet34_acsm.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | gate/residual |
-| ACSM-safe | `resnet34_acsm_safe.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | gate/residual |
-| ACSM-path | `resnet34_acsm_path.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | path pairs |
-| ACSM-aggressive | `resnet34_acsm_aggressive.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | gate/residual |
+| ACSM v1 | `resnet34_acsm.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | effectiveness diagnostics |
+| ACSM v2 | `resnet34_acsm_main.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | effectiveness diagnostics |
+| ACSM v3 | `resnet34_acsm_main_v3.yaml` | 3407 | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | effectiveness diagnostics |
 
 ## Test Sets
 
@@ -30,14 +28,11 @@ Use the Vox-CA/MIM evaluation protocol:
 - ACSM diagnostics: gate mean/std, residual norm, raw/canonical cosine,
   path-valid pair count.
 
-## Ablations
+## Diagnostics
 
-- `resnet34_acsm_no_film.yaml`: remove AgeFiLM.
-- `resnet34_acsm_no_canonicalizer.yaml`: remove canonical scoring.
-- `resnet34_acsm_no_age_loss.yaml`: remove supervised age loss.
-- `resnet34_acsm_no_consistency.yaml`: remove ordinary-SV consistency guard.
-- `resnet34_acsm_path.yaml`: compare `lambda_path=0` against weak path
-  consistency.
+- Use `tools/diagnose_acsm_trajectory.py --effectiveness-report` for
+  raw-vs-canonical change, same-speaker cross-age distance, different-speaker
+  preservation, near-identity risk, and collapse risk.
 - Predicted age vs oracle age can only be reported as diagnostic, never as the
   main fair result.
 
@@ -69,8 +64,8 @@ Do not overwrite old results. Each experiment directory must keep:
 
 ## Recommended Order
 
-1. Run `resnet34_acsm_safe.yaml` for a short smoke run.
-2. Run `resnet34_acsm.yaml` as the main ACSM candidate.
-3. Run `resnet34_acsm_path.yaml` only after pair coverage is acceptable.
-4. Run ablations: no FiLM, no canonicalizer, no age loss, no consistency.
-5. Run aggressive only after ordinary SV degradation is understood.
+1. Run `baseline_resnet34.yaml`.
+2. Run `resnet34_acsm.yaml` only as the retained v1 reference.
+3. Run `resnet34_acsm_main.yaml` as the v2 comparison point.
+4. Run `resnet34_acsm_main_v3.yaml` as the current candidate.
+5. Run effectiveness diagnostics before making any mechanistic claim.

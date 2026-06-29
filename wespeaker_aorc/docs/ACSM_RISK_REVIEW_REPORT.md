@@ -44,13 +44,13 @@ Checks:
 Commands and results:
 
 ```bash
-/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_aorc tests.test_acsm
+/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_acsm
 ```
 
 Result: PASS, 26 tests.
 
 ```bash
-/xmudata/pzj/envs/casv1/bin/python -m pytest tests/test_aorc.py tests/test_acsm.py -q
+/xmudata/pzj/envs/casv1/bin/python -m pytest tests/test_acsm.py tests/test_acsm_effectiveness_diagnostics.py -q
 ```
 
 Result: FAIL before test execution: `No module named pytest`.
@@ -94,7 +94,7 @@ Checks:
 | Check | Status | Evidence |
 | --- | --- | --- |
 | Stable `lambda_path=0` retained | PASS | `resnet34_acsm.yaml` keeps `lambda_path: 0.0`. |
-| `lambda_path>0` config exists | PASS | `resnet34_acsm_path.yaml` sets weak path consistency. |
+| `lambda_path>0` config exists | PASS | `resnet34_acsm_main.yaml` and `resnet34_acsm_main_v3.yaml` set weak path consistency. |
 | Path loss uses same speaker + different age | PASS | `PathConsistencyLoss.valid_pair_indices()` filters same speaker, valid age, and different age. |
 | No valid pair returns zero | PASS | Loss returns a same-device zero tensor when no pair exists. |
 | Valid pair count logged | PASS | `path_valid_pair_count` is returned by ACSM loss and logged by the executor. |
@@ -102,21 +102,12 @@ Checks:
 
 Review conclusion: the implementation addresses the mechanism and logging risk. It does not yet provide real evidence that the learned residual is a true age trajectory.
 
-## 4. AgeFiLM Ablations
+## 4. Active Config Set
 
 Status: PASS
 
-Required configs:
-
-| Config | Status |
-| --- | --- |
-| `resnet34_acsm_no_film.yaml` | PASS |
-| `resnet34_acsm_no_canonicalizer.yaml` | PASS |
-| `resnet34_acsm_no_age_loss.yaml` | PASS |
-| `resnet34_acsm_no_consistency.yaml` | PASS |
-| `resnet34_acsm_path.yaml` | PASS |
-| `resnet34_acsm_safe.yaml` | PASS |
-| `resnet34_acsm_aggressive.yaml` | PASS |
+The active branch keeps only the retained ACSM v1/v2/v3 configs. Removed
+ablation configs should not be referenced by new experiments.
 
 Smoke command:
 
@@ -230,8 +221,7 @@ Checks:
 | Check | Status | Evidence |
 | --- | --- | --- |
 | Consistency loss retained | PASS | `lambda_consistency` remains in configs/loss. |
-| Safe config exists | PASS | `resnet34_acsm_safe.yaml`. |
-| Aggressive config exists | PASS | `resnet34_acsm_aggressive.yaml`. |
+| v2/v3 configs exist | PASS | `resnet34_acsm_main.yaml`, `resnet34_acsm_main_v3.yaml`. |
 | Logs gate/residual/raw-can distance | PASS | Executor logs gate, residual norm, cosine, L2 distance, and path pair count. |
 | Docs require ordinary SV reporting | PASS | Experiment plan and claim guideline require ordinary SV metrics. |
 
@@ -383,16 +373,16 @@ Interpretation: loss/backward plumbing works and path pairs are counted; the nea
 
 ## First Real Training Recommendation
 
-Recommended entry point: run a small real-data stability training with the safe ACSM configuration first. This should be treated as a training-pipeline smoke test, not as a result-producing experiment.
+Recommended entry point: run a small real-data stability training with the current ACSM v3 configuration first. This should be treated as a training-pipeline smoke test, not as a result-producing experiment.
 
 ```bash
 cd /xmudata/pzj/casv/wespeaker_aorc
 /xmudata/pzj/envs/casv1/bin/torchrun --standalone --nproc_per_node=1 \
   -m wespeaker.bin.train \
-  --config examples/voxceleb/v2/conf/resnet34_acsm_safe.yaml
+  --config examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml
 ```
 
-If runtime is a concern, first use the already validated small smoke config pattern from `/tmp/acsm_train_smoke_config/acsm_train_smoke.yaml`, then move to `resnet34_acsm_safe.yaml` with a uniquely named experiment directory. Do not overwrite previous results.
+If runtime is a concern, first use the already validated small smoke config pattern from `/tmp/acsm_train_smoke_config/acsm_train_smoke.yaml`, then move to `resnet34_acsm_main_v3.yaml` with a uniquely named experiment directory. Do not overwrite previous results.
 
 ## Recommendation
 

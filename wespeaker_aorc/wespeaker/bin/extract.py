@@ -26,8 +26,6 @@ from wespeaker.dataset.dataset import Dataset
 from wespeaker.dataset.dataset_utils import apply_cmvn, spec_aug
 from wespeaker.frontend import *
 from wespeaker.models.acsm_modules import acsm_is_enabled, get_acsm_config
-from wespeaker.models.aorc_modules import AORCWrapper
-from wespeaker.models.aorc_modules import aorc_is_enabled, get_aorc_config
 from wespeaker.models.speaker_model import get_speaker_model
 from wespeaker.utils.checkpoint import load_checkpoint
 from wespeaker.utils.utils import parse_config_or_kwargs, validate_path
@@ -41,12 +39,8 @@ def extract(config='conf/config.yaml', **kwargs):
     embed_ark = configs['embed_ark']
     batch_size = configs.get('batch_size', 1)
     num_workers = configs.get('num_workers', 1)
-    aorc_conf = get_aorc_config(configs)
     acsm_conf = get_acsm_config(configs)
-    use_aorc = aorc_is_enabled(configs)
     use_acsm = acsm_is_enabled(configs)
-    if use_aorc and use_acsm:
-        raise ValueError('AORC and ACSM are mutually exclusive; enable one.')
     if use_acsm:
         configs.setdefault('model_args', {})
         configs['model_args']['acsm_args'] = acsm_conf
@@ -65,9 +59,6 @@ def extract(config='conf/config.yaml', **kwargs):
         frontend = frontend_class_dict[frontend_type](
             **test_conf[frontend_args], sample_rate=test_conf['resample_rate'])
         model.add_module("frontend", frontend)
-    if use_aorc:
-        model = AORCWrapper(model, configs['model_args']['embed_dim'],
-                            aorc_conf)
     print('Loading checkpoint ...')
     load_checkpoint(model, model_path)
     print('Finished !!! Start extracting ...')

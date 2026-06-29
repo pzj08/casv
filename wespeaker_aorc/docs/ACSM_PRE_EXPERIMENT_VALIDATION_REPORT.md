@@ -40,9 +40,7 @@ Result: dirty worktree. Important ACSM-related dirty/untracked files include:
  M wespeaker/models/resnet.py
  M wespeaker/utils/executor.py
 ?? docs/ACSM_TRAJECTORY_AND_PARAMMATCH_REPORT.md
-?? examples/voxceleb/v2/conf/resnet34_acsm_path000.yaml
-?? examples/voxceleb/v2/conf/resnet34_acsm_path001.yaml
-?? examples/voxceleb/v2/conf/resnet34_acsm_path002.yaml
+?? examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml
 ?? examples/voxceleb/v2/conf/resnet34_parammatch.yaml
 ?? tests/test_acsm_trajectory_diagnosis.py
 ?? tools/diagnose_acsm_trajectory.py
@@ -92,7 +90,7 @@ Result: **PASS**.
 Command:
 
 ```bash
-python -m pytest tests/test_aorc.py tests/test_acsm.py -q
+python -m pytest tests/test_acsm.py tests/test_acsm_effectiveness_diagnostics.py -q
 ```
 
 Result:
@@ -115,7 +113,6 @@ Result:
 
 Covered checks:
 
-- AORC original tests still pass.
 - ACSM module tests pass.
 - `AgeFiLM2d` identity/bypass behavior passes.
 - `Stage2AgeObserver` posterior/loss behavior passes.
@@ -147,7 +144,7 @@ Status: **PASS**.
 Notes:
 
 - `get_speaker_model("ResNet34_ACSM")` succeeds.
-- ACSM is a structural ResNet34 variant, not `AORCWrapper`.
+- ACSM is a structural ResNet34 variant with no legacy wrapper dependency.
 - Forward succeeds without `age_group`.
 - `embedding` is canonical embedding.
 - `raw_embedding` is observed embedding.
@@ -193,16 +190,7 @@ Configs found and constructed:
 
 - `resnet34_acsm.yaml`
 - `resnet34_acsm_main.yaml`
-- `resnet34_acsm_safe.yaml`
-- `resnet34_acsm_aggressive.yaml`
-- `resnet34_acsm_path.yaml`
-- `resnet34_acsm_path000.yaml`
-- `resnet34_acsm_path001.yaml`
-- `resnet34_acsm_path002.yaml`
-- `resnet34_acsm_no_film.yaml`
-- `resnet34_acsm_no_canonicalizer.yaml`
-- `resnet34_acsm_no_age_loss.yaml`
-- `resnet34_acsm_no_consistency.yaml`
+- `resnet34_acsm_main_v3.yaml`
 
 Required coverage:
 
@@ -488,7 +476,6 @@ python tools/profile_model.py \
   --config examples/voxceleb/v2/conf/resnet34_acsm_main.yaml \
   --include-baseline \
   --include-parammatch \
-  --include-aorc \
   --device cpu \
   --batch-size 1 \
   --frames 200 \
@@ -506,7 +493,6 @@ Key output:
 | ResNet34 | 6,634,336 | 0 | 26.01 |
 | ResNet34_ACSM | 6,684,520 | 50,184 | 34.49 |
 | ResNet34_ParamMatch | 6,684,705 | 50,369 | 32.23 |
-| AORC OAM/ORC | 6,703,975 | 69,639 | 29.78 |
 
 FLOPs/MACs are not computed; the profile script explicitly reports FLOPs unavailable to avoid adding dependencies.
 
@@ -514,7 +500,7 @@ FLOPs/MACs are not computed; the profile script explicitly reports FLOPs unavail
 
 | Claim | Required evidence | Current readiness | Status |
 | --- | --- | --- | --- |
-| ACSM is an architecture-level improvement, not AORCWrapper | Code inspection, factory construction, baseline/AORC tests | `ResNet34_ACSM` is ResNet structural variant; AORC tests still pass | READY_TO_TEST |
+| ACSM is an architecture-level ResNet variant | Code inspection, factory construction, baseline tests | `ResNet34_ACSM` is a ResNet structural variant | READY_TO_TEST |
 | ACSM forward uses predicted age posterior | Forward without `age_group`, fair audit, trajectory model mode | Forward succeeds without age labels; `oracle_age_used=false` | READY_TO_TEST |
 | AgeFiLM is necessary | w/o AgeFiLM ablation config and real results | Config exists, no real result yet | READY_TO_TEST |
 | OrderedAgeCanonicalizer is necessary | w/o canonicalizer ablation config and real results | Config exists, no real result yet | READY_TO_TEST |
@@ -538,7 +524,7 @@ No code-level **NO_GO** blockers were found:
 - Baseline `ResNet34` behavior is not broken.
 - Extraction does not require true age labels.
 - `score.py` does not depend on age labels.
-- ACSM/AORC protocol separation is clear.
+- Legacy removed modules are not part of the active code path.
 - ACSM configs load.
 - Checkpoint partial loading is tested.
 - No speaker/utterance/trial leakage was found in the audited Vox-O trial setup.
@@ -561,16 +547,11 @@ Reproducibility condition before official runs:
 Run in this order after committing/archiving the exact code state:
 
 1. ResNet34 official baseline.
-2. ACSM-safe.
-3. ACSM-main, `lambda_path=0.01`.
-4. ACSM-path000, `lambda_path=0`.
-5. ACSM-path002, `lambda_path=0.02`.
-6. w/o AgeFiLM.
-7. w/o canonicalizer.
-8. w/o consistency.
-9. w/o age loss.
-10. AORC/OATC control.
-11. ParamMatch, if resources allow.
+2. ACSM v1, `resnet34_acsm.yaml`, only as retained reference.
+3. ACSM v2, `resnet34_acsm_main.yaml`.
+4. ACSM v3, `resnet34_acsm_main_v3.yaml`.
+5. ParamMatch, if resources allow.
+6. Effectiveness diagnostics for every ACSM checkpoint used in reporting.
 
 For every experiment save:
 
@@ -598,4 +579,3 @@ Disallowed wording before real results:
 - “ACSM learned a real age trajectory.”
 - “ACSM does not damage ordinary SV.”
 - “ACSM is proven effective.”
-

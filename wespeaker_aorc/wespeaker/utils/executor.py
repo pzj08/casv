@@ -33,16 +33,6 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
     # By default use average pooling
     loss_meter = tnt.meter.AverageValueMeter()
     acc_meter = tnt.meter.ClassErrorMeter(accuracy=True)
-    aorc_meters = {
-        'loss_spk': tnt.meter.AverageValueMeter(),
-        'loss_oam': tnt.meter.AverageValueMeter(),
-        'loss_ord': tnt.meter.AverageValueMeter(),
-        'loss_proxy': tnt.meter.AverageValueMeter(),
-        'loss_dir': tnt.meter.AverageValueMeter(),
-        'loss_caa': tnt.meter.AverageValueMeter(),
-        'loss_smooth': tnt.meter.AverageValueMeter(),
-    }
-    aorc_stat_meters = {}
     acsm_meters = {
         'loss_spk': tnt.meter.AverageValueMeter(),
         'loss_age': tnt.meter.AverageValueMeter(),
@@ -50,6 +40,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'loss_smooth': tnt.meter.AverageValueMeter(),
         'loss_path': tnt.meter.AverageValueMeter(),
         'loss_acsm_total': tnt.meter.AverageValueMeter(),
+        'weighted_consistency': tnt.meter.AverageValueMeter(),
         'gate_mean': tnt.meter.AverageValueMeter(),
         'gate_std': tnt.meter.AverageValueMeter(),
         'uncertainty_mean': tnt.meter.AverageValueMeter(),
@@ -78,7 +69,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
 
             utts = batch['key']
             targets = batch['label'].long()
-            aorc_speakers = batch.get('orig_label', targets).long()
+            speakers = batch.get('orig_label', targets).long()
             projection = getattr(model.module, 'projection', None)
             if projection is not None and hasattr(projection, 'weight'):
                 num_class = projection.weight.size(0)
@@ -97,7 +88,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                                bad_keys, bad_labels))
                     raise ValueError('invalid speaker label before projection')
             targets = targets.to(device)  # (B)
-            aorc_speakers = aorc_speakers.to(device)  # (B)
+            speakers = speakers.to(device)  # (B)
             age_groups = batch.get('age_group', None)
             if age_groups is not None:
                 age_groups = age_groups.long()
@@ -147,7 +138,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                     features = spec_aug(
                         features, **configs['dataset_args']['spec_aug_args'])
 
-                model_outputs = model(features)  # (embed_a, embed_b) or AORC dict
+                model_outputs = model(features)
                 if isinstance(model_outputs, dict):
                     embeds = model_outputs['embedding']
                 else:
@@ -168,43 +159,15 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                         age_groups = targets.new_full(targets.shape,
                                                      ignore_index)
                     extra_losses = model.module.compute_acsm_losses(
-                        model_outputs, aorc_speakers, age_groups, epoch=epoch)
+                        model_outputs, speakers, age_groups, epoch=epoch)
                     loss = loss + extra_losses['loss_acsm_total']
                     extra_kind = 'ACSM'
-                elif isinstance(model_outputs, dict) and hasattr(
-                        model.module, 'compute_aorc_losses'):
-                    if age_groups is None:
-                        ignore_index = model.module.ignore_age_index
-                        age_groups = targets.new_full(targets.shape,
-                                                     ignore_index)
-                    extra_losses = model.module.compute_aorc_losses(
-                        model_outputs, aorc_speakers, age_groups, epoch=epoch)
-                    conf = model.module.config
-                    lambda_caa_eff = extra_losses.get(
-                        'stat_caa_lambda_eff',
-                        spk_loss.new_tensor(conf['lambda_caa'])).detach()
-                    loss = (loss +
-                            conf['lambda_oam'] * extra_losses['loss_oam'] +
-                            float(lambda_caa_eff.item()) *
-                            extra_losses['loss_caa'] +
-                            conf['lambda_smooth'] *
-                            extra_losses['loss_smooth'])
-                    extra_kind = 'AORC'
 
             # loss, acc
             loss_meter.add(loss.item())
             acc_meter.add(logits.cpu().detach().numpy(), targets.cpu().numpy())
-            aorc_meters['loss_spk'].add(spk_loss.item())
             acsm_meters['loss_spk'].add(spk_loss.item())
-            if extra_kind == 'AORC':
-                for name, value in extra_losses.items():
-                    if name.startswith('stat_'):
-                        if name not in aorc_stat_meters:
-                            aorc_stat_meters[name] = tnt.meter.AverageValueMeter()
-                        aorc_stat_meters[name].add(value.item())
-                    elif name in aorc_meters:
-                        aorc_meters[name].add(value.item())
-            elif extra_kind == 'ACSM':
+            if extra_kind == 'ACSM':
                 acsm_seen_batches += 1
                 path_count = float(
                     extra_losses['path_valid_pair_count'].detach().item())
@@ -230,17 +193,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                 'lr': '{:.3g}'.format(scheduler.get_lr()),
                 'margin': '{:.3g}'.format(margin_scheduler.get_margin()),
             }
-            if extra_kind == 'AORC':
-                postfix.update({
-                    'spk': '{:.3f}'.format(aorc_meters['loss_spk'].value()[0]),
-                    'oam': '{:.3f}'.format(aorc_meters['loss_oam'].value()[0]),
-                    'dir': '{:.3f}'.format(aorc_meters['loss_dir'].value()[0]),
-                    'caa': '{:.3f}'.format(aorc_meters['loss_caa'].value()[0]),
-                })
-                if hasattr(model.module, 'residual_scale_value'):
-                    postfix['r'] = '{:.3g}'.format(
-                        model.module.residual_scale_value().float().item())
-            elif extra_kind == 'ACSM':
+            if extra_kind == 'ACSM':
                 postfix.update({
                     'spk':
                     '{:.3f}'.format(acsm_meters['loss_spk'].value()[0]),
@@ -266,32 +219,7 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                            (loss_meter.value()[0], acc_meter.value()[0]),
                            width=10,
                            style='grid'))
-                if extra_kind == 'AORC':
-                    msg = 'AORC ' + ', '.join([
-                        '{}={:.6f}'.format(k, v.value()[0])
-                        for k, v in aorc_meters.items()
-                    ])
-                    if hasattr(model.module, 'residual_scale_value'):
-                        msg += ', residual_scale={:.6f}'.format(
-                            model.module.residual_scale_value().float().item())
-                    logger.info(msg)
-                    if aorc_stat_meters:
-                        selected = [
-                            'stat_proxy_valid_count',
-                            'stat_dir_active',
-                            'stat_dir_num_pairs',
-                            'stat_caa_active',
-                            'stat_caa_num_positive_pairs',
-                            'stat_caa_num_cross_age_positive_pairs',
-                            'stat_caa_num_large_gap_positive_pairs',
-                            'stat_caa_lambda_eff',
-                        ]
-                        stat_msg = 'AORC_DIAG ' + ', '.join([
-                            '{}={:.6f}'.format(k, aorc_stat_meters[k].value()[0])
-                            for k in selected if k in aorc_stat_meters
-                        ])
-                        logger.info(stat_msg)
-                elif extra_kind == 'ACSM':
+                if extra_kind == 'ACSM':
                     msg = 'ACSM ' + ', '.join([
                         '{}={:.6f}'.format(k, v.value()[0])
                         for k, v in acsm_meters.items()
@@ -317,7 +245,8 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                 'path_valid_pair_count={:.6f}, loss_path={:.6f}, '
                 'gate_mean={:.6f}, residual_norm_mean={:.6f}, '
                 'raw_can_cosine_mean={:.6f}, loss_age={:.6f}, '
-                'loss_consistency={:.6f}, loss_smooth={:.6f}'.format(
+                'loss_consistency={:.6f}, weighted_consistency={:.6f}, '
+                'loss_smooth={:.6f}'.format(
                     ratio, acsm_meters['path_valid_pair_count'].value()[0],
                     acsm_meters['loss_path'].value()[0],
                     acsm_meters['gate_mean'].value()[0],
@@ -325,4 +254,5 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                     acsm_meters['raw_can_cosine_mean'].value()[0],
                     acsm_meters['loss_age'].value()[0],
                     acsm_meters['loss_consistency'].value()[0],
+                    acsm_meters['weighted_consistency'].value()[0],
                     acsm_meters['loss_smooth'].value()[0]))

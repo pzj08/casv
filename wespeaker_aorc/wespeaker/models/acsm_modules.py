@@ -9,8 +9,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from wespeaker.losses.aorc_losses import OrdinalAgeLoss
-
 
 ACSM_DEFAULTS = {
     'enabled': True,
@@ -43,6 +41,7 @@ ACSM_DEFAULTS = {
         'ramp_epoch': 2,
     },
     'consistency': {
+        'type': 'cosine',
         'mode': 'embedding',
         'small_age_gap': 1,
         'only_small_age_gap': False,
@@ -93,6 +92,27 @@ def _stat(value, ref):
     if torch.is_tensor(value):
         return value.detach()
     return ref.new_tensor(float(value)).detach()
+
+
+class OrdinalAgeLoss(nn.Module):
+    """CORAL-style ordinal regression loss for ordered age groups."""
+
+    def __init__(self, num_age_groups, ignore_index=-1):
+        super().__init__()
+        self.num_age_groups = num_age_groups
+        self.ignore_index = ignore_index
+        self.loss = nn.BCEWithLogitsLoss()
+
+    def forward(self, rank_logits, age_group):
+        valid = age_group != self.ignore_index
+        if valid.sum() == 0:
+            return _zero_like(rank_logits)
+        logits = rank_logits[valid]
+        labels = age_group[valid].long()
+        thresholds = torch.arange(self.num_age_groups - 1,
+                                  device=logits.device).view(1, -1)
+        targets = (labels.view(-1, 1) > thresholds).to(logits.dtype)
+        return self.loss(logits, targets)
 
 
 class AgeFiLM2d(nn.Module):

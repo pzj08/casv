@@ -8,7 +8,7 @@ exp_dir: exp/ACSM-ResNet34-main-TSTP-emb256-fbank80
 key_filter_file: data/baseline/vox2_train_voxca/key.list
 gpus: "[0,1,2,3]"
 num_avg: 10
-enable_amp: False
+enable_amp: True
 
 seed: 3407
 num_epochs: 150
@@ -72,18 +72,19 @@ model_args:
       film_scale: 0.05
     canonicalizer:
       enabled: true
-      canonical_scale: 0.10
+      canonical_scale: 0.20
       learnable_canonical_scale: false
-      gate_max: 0.40
-      gate_init_bias: -2.0
-      transition_init_std: 0.005
+      gate_max: 0.50
+      gate_init_bias: -1.2
+      transition_init_std: 0.015
     losses:
       lambda_age: 0.10
-      lambda_consistency: 0.03
+      lambda_consistency: 0.02
       lambda_smooth: 1.0e-4
-      lambda_path: 0.01
+      lambda_path: 0.02
       ramp_epoch: 3
     consistency:
+      type: cosine
       mode: embedding
       small_age_gap: 1
       only_small_age_gap: false

@@ -14,10 +14,10 @@ No EER or minDCF improvement is claimed.
 
 | Risk | Status | Fix |
 | --- | --- | --- |
-| A. Missing ACSM unit tests | FIXED | Expanded `tests/test_acsm.py` for modules, forward, losses, path pairs, partial checkpoint loading, and baseline/AORC compatibility. |
+| A. Missing ACSM unit tests | FIXED | Expanded `tests/test_acsm.py` for modules, forward, losses, path pairs, partial checkpoint loading, and baseline compatibility. |
 | B. ACSM may be an empty module | FIXED | Added `tools/diagnose_acsm.py` and train diagnostics for gate, residual, raw/canonical cosine and L2. |
-| C. `lambda_path=0` weakens trajectory claim | PARTIALLY FIXED | Kept stable default at 0, added `resnet34_acsm_path.yaml`, path pair count, and path tests. Real evidence still requires training ablation. |
-| D. AgeFiLM necessity unproven | FIXED | Added no-FiLM, no-canonicalizer, no-age-loss, no-consistency, path, safe, and aggressive configs. |
+| C. Weak trajectory evidence | PARTIALLY FIXED | Added path pair counts and effectiveness diagnostics. Real evidence still requires checkpoint-level diagnostics and official evaluation. |
+| D. AgeFiLM necessity unproven | PARTIALLY FIXED | Diagnostics can inspect behavior, but ablation configs were removed from the active branch. |
 | E. Fair evaluation and test-age leakage | FIXED | Added `tools/audit_fair_eval.py`; extraction still uses predicted posterior and `score.py` remains age-free. |
 | F. Speaker/utterance/trial/age label leakage | FIXED | Added `tools/audit_data_leakage.py`; local Vox-CA audit found no train/eval speaker or utterance overlap. |
 | G. Batch sampling may make path loss zero | PARTIALLY FIXED | Added path pair diagnostics and `tools/diagnose_age_pair_coverage.py`; sampler not changed by default. |
@@ -45,13 +45,9 @@ No EER or minDCF improvement is claimed.
 - `tools/audit_data_leakage.py`
 - `tools/diagnose_age_pair_coverage.py`
 - `tools/profile_model.py`
-- `examples/voxceleb/v2/conf/resnet34_acsm_path.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_no_film.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_no_canonicalizer.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_no_age_loss.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_no_consistency.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_safe.yaml`
-- `examples/voxceleb/v2/conf/resnet34_acsm_aggressive.yaml`
+- `examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml`
+- `docs/ACSM_EFFECTIVENESS_DIAGNOSTICS.md`
+- `tests/test_acsm_effectiveness_diagnostics.py`
 - `docs/ACSM_EXPERIMENT_PLAN.md`
 - `docs/ACSM_CLAIM_GUIDELINES.md`
 - `docs/ACSM_RISK_FIX_REPORT.md`
@@ -78,13 +74,13 @@ No EER or minDCF improvement is claimed.
 Result: PASS.
 
 ```bash
-/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_aorc tests.test_acsm
+/xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_acsm
 ```
 
 Result: PASS, 26 tests.
 
 ```bash
-/xmudata/pzj/envs/casv1/bin/python -m pytest tests/test_aorc.py tests/test_acsm.py -q
+/xmudata/pzj/envs/casv1/bin/python -m pytest tests/test_acsm.py tests/test_acsm_effectiveness_diagnostics.py -q
 ```
 
 Result: NOT RUN in this environment because `pytest` is not installed.
@@ -182,9 +178,9 @@ experiment.
 Proceed to a small real training smoke only after reviewing the new audits.
 Recommended first experiment:
 
-1. `resnet34_acsm_safe.yaml` for ordinary-SV protection.
-2. `resnet34_acsm.yaml` as the main ACSM candidate.
-3. `resnet34_acsm_path.yaml` for trajectory-claim ablation.
+1. `resnet34_acsm.yaml` as the retained v1 reference.
+2. `resnet34_acsm_main.yaml` as the v2 comparison point.
+3. `resnet34_acsm_main_v3.yaml` as the current candidate.
 
 Performance conclusions must wait for real Vox-CA/MIM evaluation. This risk
 fix pass does not show that ACSM improves EER.

@@ -13,7 +13,6 @@ import torch
 import yaml
 
 from wespeaker.models.acsm_modules import acsm_is_enabled, get_acsm_config
-from wespeaker.models.aorc_modules import AORCWrapper, aorc_is_enabled, get_aorc_config
 from wespeaker.models.speaker_model import get_speaker_model
 
 
@@ -22,9 +21,6 @@ def _build(configs):
     if acsm_is_enabled(configs):
         configs['model_args']['acsm_args'] = get_acsm_config(configs)
     model = get_speaker_model(configs['model'])(**configs['model_args'])
-    if aorc_is_enabled(configs):
-        model = AORCWrapper(model, configs['model_args']['embed_dim'],
-                            get_aorc_config(configs))
     return model
 
 
@@ -88,7 +84,6 @@ def main():
     parser.add_argument('--config', required=True)
     parser.add_argument('--include-baseline', action='store_true')
     parser.add_argument('--include-parammatch', action='store_true')
-    parser.add_argument('--include-aorc', action='store_true')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--frames', type=int, default=200)
@@ -117,18 +112,6 @@ def main():
             'residual_scale': 0.1,
         })
         reports.append(_profile('resnet34_parammatch', cfg, args))
-    if args.include_aorc:
-        cfg = copy.deepcopy(base)
-        cfg['model'] = 'ResNet34'
-        cfg['model_args'].pop('acsm_args', None)
-        cfg['model_args'].pop('param_match_args', None)
-        cfg['aorc_args'] = {
-            'enable_oam': True,
-            'enable_orc': True,
-            'enable_caa': False,
-            'num_age_groups': 7,
-        }
-        reports.append(_profile('resnet34_aorc_oam_orc', cfg, args))
     for report in reports:
         report['extra_params_over_resnet34'] = (
             report['total_params'] - baseline_total)

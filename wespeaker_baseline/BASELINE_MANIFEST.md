@@ -34,7 +34,7 @@ to make the effective training LR exactly `0.1 -> 5e-5`.
 Run from this tree root:
 
 ```bash
-rg -n "AORC|aorc|age_group|enable_oam|enable_orc|enable_caa" wespeaker examples
+git status --short
 ```
 
 The clean baseline must not contain innovation-path hits.
