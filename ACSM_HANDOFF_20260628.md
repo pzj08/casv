@@ -6,7 +6,7 @@ Project root:
 
 Main working directory:
 
-`/xmudata/pzj/casv/wespeaker_aorc`
+`/xmudata/pzj/casv/wespeaker_acsm`
 
 Current stage: ACSM-Net has passed implementation-level repair and has entered engineering validation plus first real training runs. There are no official EER/minDCF results yet. Do not claim ACSM improves performance.
 
@@ -18,7 +18,7 @@ The ACSM consistency loss was changed from unnormalized raw L2 over embedding di
 
 Main file:
 
-`wespeaker_aorc/wespeaker/models/resnet.py`
+`wespeaker_acsm/wespeaker/models/resnet.py`
 
 Current intended behavior:
 
@@ -35,7 +35,7 @@ The old raw L2 sum produced very large values. With 256-dimensional embeddings, 
 
 Main config:
 
-`wespeaker_aorc/examples/voxceleb/v2/conf/resnet34_acsm_main.yaml`
+`wespeaker_acsm/examples/voxceleb/v2/conf/resnet34_acsm_main.yaml`
 
 Important current parameters:
 
@@ -69,7 +69,7 @@ Do not revert to raw L2 consistency as main ACSM. If kept, raw L2 should only be
 
 Main file:
 
-`wespeaker_aorc/wespeaker/utils/executor.py`
+`wespeaker_acsm/wespeaker/utils/executor.py`
 
 ACSM logs include or are expected to include:
 
@@ -106,7 +106,7 @@ Full copy completed:
 
 Default shard list was overwritten:
 
-`wespeaker_aorc/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list`
+`wespeaker_acsm/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list`
 
 Current status:
 
@@ -116,7 +116,7 @@ Current status:
 
 The previous helper list still exists:
 
-`wespeaker_aorc/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard_work1_full.list`
+`wespeaker_acsm/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard_work1_full.list`
 
 Future default training that uses `shard.list` will use `/work1` without passing a custom `--train_data`.
 
@@ -128,15 +128,15 @@ Current run/session:
 
 Experiment directory:
 
-`/xmudata/pzj/casv/wespeaker_aorc/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2`
+`/xmudata/pzj/casv/wespeaker_acsm/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2`
 
 Launch log:
 
-`/xmudata/pzj/casv/wespeaker_aorc/exp_launch_logs/acsm_main_work1_gpu4_7_20260628_v2.log`
+`/xmudata/pzj/casv/wespeaker_acsm/exp_launch_logs/acsm_main_work1_gpu4_7_20260628_v2.log`
 
 Train log:
 
-`/xmudata/pzj/casv/wespeaker_aorc/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/train.log`
+`/xmudata/pzj/casv/wespeaker_acsm/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/train.log`
 
 Physical GPUs:
 
@@ -203,13 +203,13 @@ tmux ls
 Check training log:
 
 ```bash
-tail -80 /xmudata/pzj/casv/wespeaker_aorc/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/train.log
+tail -80 /xmudata/pzj/casv/wespeaker_acsm/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/train.log
 ```
 
 Check launch log:
 
 ```bash
-tail -40 /xmudata/pzj/casv/wespeaker_aorc/exp_launch_logs/acsm_main_work1_gpu4_7_20260628_v2.log
+tail -40 /xmudata/pzj/casv/wespeaker_acsm/exp_launch_logs/acsm_main_work1_gpu4_7_20260628_v2.log
 ```
 
 Check GPU:
@@ -221,15 +221,15 @@ nvidia-smi
 Check checkpoints:
 
 ```bash
-ls -lh /xmudata/pzj/casv/wespeaker_aorc/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/models
+ls -lh /xmudata/pzj/casv/wespeaker_acsm/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2/models
 ```
 
 Check default shard list:
 
 ```bash
-head -5 /xmudata/pzj/casv/wespeaker_aorc/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
-wc -l /xmudata/pzj/casv/wespeaker_aorc/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
-rg -n '^/data/' /xmudata/pzj/casv/wespeaker_aorc/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
+head -5 /xmudata/pzj/casv/wespeaker_acsm/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
+wc -l /xmudata/pzj/casv/wespeaker_acsm/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
+rg -n '^/data/' /xmudata/pzj/casv/wespeaker_acsm/examples/voxceleb/v2/data/baseline/vox2_train_voxca/shard.list
 ```
 
 Stop current training if explicitly requested:
@@ -264,7 +264,7 @@ tmux kill-session -t acsm_main_work1_gpu4_7
    - no_canonicalizer
    - no_consistency
    - no_age_loss
-   - AORC
+   - ACSM v3 candidate
    - ParamMatch if resources allow
 
 Each experiment should save:

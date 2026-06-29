@@ -12,4 +12,4 @@ Additional baseline dependencies:
 - `tornado==6.5.7`, `jsonpatch==1.33`, `websocket-client==1.9.0`:
   pulled in for the `visdom` import path.
 
-The clean baseline tree does not require AORC-specific packages.
+The clean baseline tree does not require method-specific packages.

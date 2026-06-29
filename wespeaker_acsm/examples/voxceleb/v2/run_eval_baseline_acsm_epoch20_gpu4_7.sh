@@ -16,7 +16,7 @@ baseline_src_exp_dir=exp/baseline_resnet34_epoch20
 baseline_model_path=${baseline_src_exp_dir}/models/model_20.pt
 baseline_eval_dir=exp/baseline_resnet34_epoch20_eval_voxca_gpu4_7_20260628
 
-acsm_src_exp_dir=/xmudata/pzj/casv/wespeaker_aorc/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2
+acsm_src_exp_dir=/xmudata/pzj/casv/wespeaker_acsm/exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2
 acsm_model_path=${acsm_src_exp_dir}/models/model_20.pt
 acsm_eval_dir=exp/ACSM-ResNet34-main-cos-work1-gpu4-7-20260628-v2_epoch20_eval_voxca_gpu4_7_20260628
 

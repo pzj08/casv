@@ -21,6 +21,7 @@ venv
 *.sublime-project
 
 # Editor temporaries
+*.nfs*
 *.swn
 *.swo
 *.swp

@@ -216,7 +216,7 @@ Current verification covers:
 Commands:
 
 ```bash
-cd wespeaker_aorc
+cd wespeaker_acsm
 python -m pytest tests/test_acsm.py tests/test_acsm_effectiveness_diagnostics.py -q
 ```
 
@@ -227,7 +227,7 @@ fails before test execution because `pytest` is not installed:
 The same test files are `unittest` compatible and were run with:
 
 ```bash
-cd wespeaker_aorc
+cd wespeaker_acsm
 /xmudata/pzj/envs/casv1/bin/python -m unittest tests.test_acsm
 ```
 

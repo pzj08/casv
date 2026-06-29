@@ -2,7 +2,7 @@
 
 Date: 2026-06-26
 
-Scope: strict review of the ACSM high-risk fixes in `wespeaker_aorc`. This review checks whether the risk was actually reduced by executable code, tests, diagnostics, and configuration, not only by documentation. No formal training result or EER/minDCF improvement is claimed here.
+Scope: strict review of the ACSM high-risk fixes in `wespeaker_acsm`. This review checks whether the risk was actually reduced by executable code, tests, diagnostics, and configuration, not only by documentation. No formal training result or EER/minDCF improvement is claimed here.
 
 ## Executive Summary
 
@@ -30,7 +30,7 @@ Checks:
 
 | Check | Status | Evidence |
 | --- | --- | --- |
-| `tests/test_acsm.py` exists | PASS | `wespeaker_aorc/tests/test_acsm.py` exists. |
+| `tests/test_acsm.py` exists | PASS | `wespeaker_acsm/tests/test_acsm.py` exists. |
 | Covers `AgeFiLM2d` | PASS | Tests enabled/disabled behavior, shape, finite values, and near-identity zero initialization. |
 | Covers `Stage2AgeObserver` | PASS | Tests output keys, posterior normalization/non-negativity, ordinal loss, and ignore-age behavior. |
 | Covers `OrderedAgeCanonicalizer` | PASS | Tests shape, gate range, L2 normalization, reference-age residual, smooth loss, and `canonical_scale=0`. |
@@ -61,7 +61,7 @@ Review conclusion: the test content is meaningful and executable via the standar
 
 Status: PARTIAL
 
-Script: `wespeaker_aorc/tools/diagnose_acsm.py`
+Script: `wespeaker_acsm/tools/diagnose_acsm.py`
 
 Example command:
 
@@ -121,7 +121,7 @@ Result: PASS for all ACSM configs.
 
 Status: PARTIAL
 
-Script: `wespeaker_aorc/tools/audit_fair_eval.py`
+Script: `wespeaker_acsm/tools/audit_fair_eval.py`
 
 Example command:
 
@@ -150,7 +150,7 @@ Review conclusion: the normal evaluation path is fair with respect to test age. 
 
 Status: PARTIAL
 
-Script: `wespeaker_aorc/tools/audit_data_leakage.py`
+Script: `wespeaker_acsm/tools/audit_data_leakage.py`
 
 Example command:
 
@@ -180,7 +180,7 @@ Observed full audit on Vox-CA/official trial files reported no speaker overlap, 
 
 Status: PASS
 
-Script: `wespeaker_aorc/tools/diagnose_age_pair_coverage.py`
+Script: `wespeaker_acsm/tools/diagnose_age_pair_coverage.py`
 
 Example command:
 
@@ -231,7 +231,7 @@ Review conclusion: the protection mechanisms and measurements exist, but ordinar
 
 Status: PASS
 
-Script: `wespeaker_aorc/tools/profile_model.py`
+Script: `wespeaker_acsm/tools/profile_model.py`
 
 Example command:
 
@@ -258,7 +258,7 @@ Observed smoke output included baseline params around 6.63M and ACSM params arou
 
 Status: PASS
 
-Document: `wespeaker_aorc/docs/ACSM_EXPERIMENT_PLAN.md`
+Document: `wespeaker_acsm/docs/ACSM_EXPERIMENT_PLAN.md`
 
 Checks:
 
@@ -278,7 +278,7 @@ Review conclusion: the plan is adequate for avoiding premature claims, provided 
 
 Status: PASS
 
-Document: `wespeaker_aorc/docs/ACSM_CLAIM_GUIDELINES.md`
+Document: `wespeaker_acsm/docs/ACSM_CLAIM_GUIDELINES.md`
 
 Checks:
 
@@ -376,7 +376,7 @@ Interpretation: loss/backward plumbing works and path pairs are counted; the nea
 Recommended entry point: run a small real-data stability training with the current ACSM v3 configuration first. This should be treated as a training-pipeline smoke test, not as a result-producing experiment.
 
 ```bash
-cd /xmudata/pzj/casv/wespeaker_aorc
+cd /xmudata/pzj/casv/wespeaker_acsm
 /xmudata/pzj/envs/casv1/bin/torchrun --standalone --nproc_per_node=1 \
   -m wespeaker.bin.train \
   --config examples/voxceleb/v2/conf/resnet34_acsm_main_v3.yaml

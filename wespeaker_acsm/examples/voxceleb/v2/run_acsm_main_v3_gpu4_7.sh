@@ -2,11 +2,11 @@
 
 set -euo pipefail
 
-cd /xmudata/pzj/casv/wespeaker_aorc
+cd /xmudata/pzj/casv/wespeaker_acsm
 
-export PATH="/xmudata/pzj/casv/wespeaker_aorc/examples/voxceleb/v2:${PATH}"
+export PATH="/xmudata/pzj/casv/wespeaker_acsm/examples/voxceleb/v2:${PATH}"
 export PYTHONIOENCODING=UTF-8
-export PYTHONPATH="/xmudata/pzj/casv/wespeaker_aorc:${PYTHONPATH:-}"
+export PYTHONPATH="/xmudata/pzj/casv/wespeaker_acsm:${PYTHONPATH:-}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-4,5,6,7}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
