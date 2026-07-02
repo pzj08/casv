@@ -31,6 +31,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import wespeaker.models.pooling_layers as pooling_layers
 from wespeaker.models.acsm_modules import AgeFiLM2d
+from wespeaker.models.acsm_modules import AgeTrajectoryLoss
+from wespeaker.models.acsm_modules import AgeTrajectoryTransport
 from wespeaker.models.acsm_modules import OrderedAgeCanonicalizer
 from wespeaker.models.acsm_modules import PathConsistencyLoss
 from wespeaker.models.acsm_modules import Stage2AgeObserver
@@ -285,6 +287,28 @@ class ResNetACSM(ResNet):
             enabled=bool(canon_conf.get('enabled', True)),
             eps=self.eps)
         self.path_loss = PathConsistencyLoss(self.ignore_age_index, self.eps)
+        traj_conf = self.acsm_config.get('trajectory', {})
+        self.trajectory_enabled = bool(traj_conf.get('enabled', False))
+        if self.trajectory_enabled:
+            self.trajectory_transport = AgeTrajectoryTransport(
+                self.num_age_groups,
+                embed_dim,
+                gate_max=float(traj_conf.get('gate_max', 0.5)),
+                gate_init_bias=float(traj_conf.get('gate_init_bias', -2.0)),
+                eps=self.eps,
+            )
+            self.trajectory_loss = AgeTrajectoryLoss(
+                ignore_age_index=self.ignore_age_index,
+                min_age_gap=int(traj_conf.get('min_age_gap', 1)),
+                max_pairs=int(traj_conf.get('max_pairs', 512)),
+                bidirectional=bool(traj_conf.get('bidirectional', True)),
+                detach_target=bool(traj_conf.get('detach_target', True)),
+                loss_type=traj_conf.get('loss_type', 'cosine'),
+                eps=self.eps,
+            )
+        else:
+            self.trajectory_transport = None
+            self.trajectory_loss = None
 
     def _get_frame_level_feat(self, x):
         x = x.permute(0, 2, 1)
@@ -335,18 +359,28 @@ class ResNetACSM(ResNet):
                 'transition_smooth_loss':
                 canon_outputs['transition_smooth_loss']
             },
+            'acstf_enabled': self.trajectory_enabled,
         }
         return outputs
 
     def compute_acsm_losses(self, outputs, speakers, age_groups, epoch=None):
         zero = outputs['embedding'].new_zeros(())
         loss_conf = self.acsm_config['losses']
+        traj_conf = self.acsm_config.get('trajectory', {})
         warm = acsm_warmup_scale(epoch, loss_conf.get('ramp_epoch', 0))
         losses = {
             'loss_age': zero,
             'loss_consistency': zero,
             'loss_smooth': zero,
             'loss_path': zero,
+            'loss_transport': zero,
+            'loss_transport_cycle': zero,
+            'loss_transport_identity': zero,
+            'loss_acstf_total': zero,
+            'transport_pair_count': zero.detach(),
+            'transport_gate_mean': zero.detach(),
+            'transport_residual_norm_mean': zero.detach(),
+            'transport_cos_pos_mean': zero.detach(),
         }
         losses['path_valid_pair_count'] = self.path_loss.valid_pair_count(
             outputs['embedding'], speakers, age_groups)
@@ -391,6 +425,35 @@ class ResNetACSM(ResNet):
             losses['loss_smooth'] +
             float(loss_conf.get('lambda_path', 0.0)) * losses['loss_path'])
         loss_total = loss_total * float(warm)
+        loss_acstf_total = zero
+        lambda_transport = float(traj_conf.get('lambda_transport', 0.0))
+        lambda_cycle = float(traj_conf.get('lambda_cycle', 0.0))
+        lambda_identity = float(traj_conf.get('lambda_identity', 0.0))
+        use_trajectory = (
+            self.trajectory_enabled and self.trajectory_loss is not None
+            and self.trajectory_transport is not None
+            and (lambda_transport > 0.0 or lambda_cycle > 0.0
+                 or lambda_identity > 0.0))
+        if use_trajectory:
+            transport_embeddings = (
+                outputs['raw_embedding'] if bool(
+                    traj_conf.get('use_raw_embedding', True)) else
+                outputs['embedding'])
+            traj_losses = self.trajectory_loss(transport_embeddings,
+                                               outputs['age_posterior'],
+                                               speakers, age_groups,
+                                               self.trajectory_transport,
+                                               self.canonicalizer)
+            losses.update(traj_losses)
+            loss_acstf_total = (
+                lambda_transport * losses['loss_transport'] +
+                lambda_cycle * losses['loss_transport_cycle'] +
+                lambda_identity * losses['loss_transport_identity'])
+            for param in self.trajectory_transport.parameters():
+                loss_acstf_total = loss_acstf_total + param.sum() * 0.0
+            loss_acstf_total = loss_acstf_total * float(warm)
+            losses['loss_acstf_total'] = loss_acstf_total
+            loss_total = loss_total + loss_acstf_total
         losses['loss_acsm_total'] = loss_total
         losses['weighted_consistency'] = (
             float(loss_conf.get('lambda_consistency', 0.0)) *

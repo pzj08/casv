@@ -40,6 +40,14 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
         'loss_smooth': tnt.meter.AverageValueMeter(),
         'loss_path': tnt.meter.AverageValueMeter(),
         'loss_acsm_total': tnt.meter.AverageValueMeter(),
+        'loss_transport': tnt.meter.AverageValueMeter(),
+        'loss_transport_cycle': tnt.meter.AverageValueMeter(),
+        'loss_transport_identity': tnt.meter.AverageValueMeter(),
+        'loss_acstf_total': tnt.meter.AverageValueMeter(),
+        'transport_pair_count': tnt.meter.AverageValueMeter(),
+        'transport_gate_mean': tnt.meter.AverageValueMeter(),
+        'transport_residual_norm_mean': tnt.meter.AverageValueMeter(),
+        'transport_cos_pos_mean': tnt.meter.AverageValueMeter(),
         'weighted_consistency': tnt.meter.AverageValueMeter(),
         'gate_mean': tnt.meter.AverageValueMeter(),
         'gate_std': tnt.meter.AverageValueMeter(),
@@ -207,6 +215,12 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
                     'path_pairs':
                     '{:.1f}'.format(
                         acsm_meters['path_valid_pair_count'].value()[0]),
+                    'trj':
+                    '{:.3f}'.format(
+                        acsm_meters['loss_acstf_total'].value()[0]),
+                    'tpairs':
+                    '{:.1f}'.format(
+                        acsm_meters['transport_pair_count'].value()[0]),
                 })
             progress_bar.set_postfix(**postfix)
 
@@ -243,12 +257,21 @@ def run_epoch(dataloader, epoch_iter, model, criterion, optimizer, scheduler,
             logger.info(
                 'ACSM_EPOCH path_nonzero_batch_ratio={:.6f}, '
                 'path_valid_pair_count={:.6f}, loss_path={:.6f}, '
+                'loss_acstf_total={:.6f}, transport_pair_count={:.6f}, '
+                'transport_gate_mean={:.6f}, '
+                'transport_residual_norm_mean={:.6f}, '
+                'transport_cos_pos_mean={:.6f}, '
                 'gate_mean={:.6f}, residual_norm_mean={:.6f}, '
                 'raw_can_cosine_mean={:.6f}, loss_age={:.6f}, '
                 'loss_consistency={:.6f}, weighted_consistency={:.6f}, '
                 'loss_smooth={:.6f}'.format(
                     ratio, acsm_meters['path_valid_pair_count'].value()[0],
                     acsm_meters['loss_path'].value()[0],
+                    acsm_meters['loss_acstf_total'].value()[0],
+                    acsm_meters['transport_pair_count'].value()[0],
+                    acsm_meters['transport_gate_mean'].value()[0],
+                    acsm_meters['transport_residual_norm_mean'].value()[0],
+                    acsm_meters['transport_cos_pos_mean'].value()[0],
                     acsm_meters['gate_mean'].value()[0],
                     acsm_meters['residual_norm_mean'].value()[0],
                     acsm_meters['raw_can_cosine_mean'].value()[0],

@@ -46,6 +46,20 @@ ACSM_DEFAULTS = {
         'small_age_gap': 1,
         'only_small_age_gap': False,
     },
+    'trajectory': {
+        'enabled': False,
+        'lambda_transport': 0.0,
+        'lambda_cycle': 0.0,
+        'lambda_identity': 0.0,
+        'use_raw_embedding': True,
+        'detach_target': True,
+        'min_age_gap': 1,
+        'max_pairs': 512,
+        'bidirectional': True,
+        'gate_max': 0.5,
+        'gate_init_bias': -2.0,
+        'loss_type': 'cosine',
+    },
     'diagnostics': {
         'strict_finite_check': True,
         'log_diagnostics': True,
@@ -249,6 +263,19 @@ class OrderedAgeCanonicalizer(nn.Module):
                 paths[k] = -self.adjacent_transitions[r:k].sum(dim=0)
         return paths
 
+    def paths_to_reference(self):
+        return self._paths_to_reference()
+
+    def expected_path_to_reference(self, q_age):
+        paths = self._paths_to_reference()
+        return torch.matmul(q_age.to(dtype=paths.dtype), paths)
+
+    def expected_transport_residual(self, q_src, q_tgt):
+        # source -> target = source -> ref - target -> ref
+        p_src = self.expected_path_to_reference(q_src)
+        p_tgt = self.expected_path_to_reference(q_tgt)
+        return p_src - p_tgt
+
     def transition_smooth_loss(self):
         if self.adjacent_transitions.size(0) < 2:
             return _zero_like(self.adjacent_transitions)
@@ -285,6 +312,189 @@ class OrderedAgeCanonicalizer(nn.Module):
             'uncertainty': uncertainty.squeeze(-1),
             'path_norm': canonical_residual.norm(dim=-1),
             'transition_smooth_loss': self.transition_smooth_loss(),
+        }
+
+
+class AgeTrajectoryTransport(nn.Module):
+    """
+    Training-only arbitrary source-age -> target-age transport module.
+
+    It uses the same ordered adjacent transition basis from
+    OrderedAgeCanonicalizer. It must not replace ACSM inference embedding and
+    must not alter scoring.
+    """
+
+    def __init__(self,
+                 num_age_groups,
+                 embedding_dim,
+                 gate_max=0.5,
+                 gate_init_bias=-2.0,
+                 eps=1.0e-12):
+        super().__init__()
+        self.num_age_groups = int(num_age_groups)
+        self.embedding_dim = int(embedding_dim)
+        self.gate_max = float(gate_max)
+        self.eps = float(eps)
+        gate_hidden = max(1, embedding_dim // 2)
+        self.gate_mlp = nn.Sequential(
+            nn.Linear(embedding_dim + 2 * num_age_groups + 2, gate_hidden),
+            nn.ReLU(),
+            nn.Linear(gate_hidden, 1),
+        )
+        nn.init.zeros_(self.gate_mlp[-1].weight)
+        nn.init.constant_(self.gate_mlp[-1].bias, float(gate_init_bias))
+
+    def _uncertainty(self, q_age, dtype):
+        q = q_age.clamp_min(self.eps)
+        entropy = -(q * q.log()).sum(dim=-1, keepdim=True)
+        denom = math.log(max(self.num_age_groups, 2))
+        return (entropy / denom).clamp(0.0, 1.0).to(dtype=dtype)
+
+    def forward(self, e_src, q_src, q_tgt, canonicalizer):
+        q_src = q_src.to(device=e_src.device, dtype=e_src.dtype)
+        q_tgt = q_tgt.to(device=e_src.device, dtype=e_src.dtype)
+        uncertainty_src = self._uncertainty(q_src, e_src.dtype)
+        uncertainty_tgt = self._uncertainty(q_tgt, e_src.dtype)
+        gate_input = torch.cat(
+            [e_src, q_src, q_tgt, uncertainty_src, uncertainty_tgt], dim=-1)
+        gate = self.gate_max * torch.sigmoid(self.gate_mlp(gate_input))
+        gate = gate * (1.0 - uncertainty_src) * (1.0 - uncertainty_tgt)
+        residual = canonicalizer.expected_transport_residual(q_src, q_tgt)
+        residual = residual.to(device=e_src.device, dtype=e_src.dtype)
+        scale = canonicalizer.canonical_scale.to(device=e_src.device,
+                                                 dtype=e_src.dtype)
+        e_trans = e_src + gate * scale * residual
+        e_trans = F.normalize(e_trans, dim=-1, eps=self.eps)
+        return {
+            'embedding': e_trans,
+            'transport_residual': residual,
+            'transport_gate': gate,
+            'transport_residual_norm': residual.norm(dim=-1),
+        }
+
+
+class AgeTrajectoryLoss(nn.Module):
+    """
+    Same-speaker different-age source->target transport loss.
+    This is a training regularizer only.
+    """
+
+    def __init__(self,
+                 ignore_age_index=-1,
+                 min_age_gap=1,
+                 max_pairs=512,
+                 bidirectional=True,
+                 detach_target=True,
+                 loss_type='cosine',
+                 eps=1.0e-12):
+        super().__init__()
+        self.ignore_age_index = int(ignore_age_index)
+        self.min_age_gap = int(min_age_gap)
+        self.max_pairs = int(max_pairs)
+        self.bidirectional = bool(bidirectional)
+        self.detach_target = bool(detach_target)
+        self.loss_type = loss_type
+        self.eps = float(eps)
+        if self.loss_type != 'cosine':
+            raise ValueError('unsupported AC-STF loss_type: {}'.format(
+                self.loss_type))
+
+    def _zero_outputs(self, embeddings):
+        zero = _zero_like(embeddings)
+        return {
+            'loss_transport': zero,
+            'loss_transport_cycle': zero,
+            'loss_transport_identity': zero,
+            'transport_pair_count': zero.detach(),
+            'transport_gate_mean': zero.detach(),
+            'transport_residual_norm_mean': zero.detach(),
+            'transport_cos_pos_mean': zero.detach(),
+        }
+
+    def valid_pair_indices(self, speakers, age_group):
+        valid_age = age_group != self.ignore_age_index
+        same_spk = speakers.view(-1, 1) == speakers.view(1, -1)
+        age_gap = (age_group.view(-1, 1) -
+                   age_group.view(1, -1)).abs()
+        enough_gap = age_gap >= self.min_age_gap
+        both_valid = valid_age.view(-1, 1) & valid_age.view(1, -1)
+        upper = torch.triu(torch.ones_like(same_spk, dtype=torch.bool),
+                           diagonal=1)
+        pairs = (same_spk & enough_gap & both_valid & upper).nonzero(
+            as_tuple=False)
+        if self.max_pairs >= 0 and pairs.size(0) > self.max_pairs:
+            pairs = pairs[:self.max_pairs]
+        return pairs
+
+    def _cosine_loss(self, source, target):
+        cosine = F.cosine_similarity(source, target, dim=-1, eps=self.eps)
+        return (1.0 - cosine).clamp_min(0.0), cosine
+
+    def forward(self, embeddings, age_posterior, speakers, age_group,
+                transport_module, canonicalizer):
+        pairs = self.valid_pair_indices(speakers, age_group)
+        if pairs.numel() == 0:
+            return self._zero_outputs(embeddings)
+
+        i, j = pairs[:, 0], pairs[:, 1]
+
+        def one_direction(src_idx, tgt_idx):
+            transported = transport_module(embeddings[src_idx],
+                                           age_posterior[src_idx],
+                                           age_posterior[tgt_idx],
+                                           canonicalizer)
+            target = embeddings[tgt_idx]
+            if self.detach_target:
+                target = target.detach()
+            loss_vec, cosine = self._cosine_loss(transported['embedding'],
+                                                 target)
+            cycled = transport_module(transported['embedding'],
+                                      age_posterior[tgt_idx],
+                                      age_posterior[src_idx], canonicalizer)
+            cycle_target = embeddings[src_idx]
+            if self.detach_target:
+                cycle_target = cycle_target.detach()
+            cycle_vec, _ = self._cosine_loss(cycled['embedding'],
+                                             cycle_target)
+            identity = transport_module(embeddings[src_idx],
+                                        age_posterior[src_idx],
+                                        age_posterior[src_idx],
+                                        canonicalizer)
+            identity_target = embeddings[src_idx]
+            if self.detach_target:
+                identity_target = identity_target.detach()
+            identity_vec, _ = self._cosine_loss(identity['embedding'],
+                                                identity_target)
+            return {
+                'transport_loss': loss_vec,
+                'cycle_loss': cycle_vec,
+                'identity_loss': identity_vec,
+                'gate': transported['transport_gate'],
+                'residual_norm': transported['transport_residual_norm'],
+                'cosine': cosine,
+            }
+
+        results = [one_direction(i, j)]
+        if self.bidirectional:
+            results.append(one_direction(j, i))
+
+        transport_loss = torch.cat(
+            [r['transport_loss'] for r in results]).mean()
+        cycle_loss = torch.cat([r['cycle_loss'] for r in results]).mean()
+        identity_loss = torch.cat(
+            [r['identity_loss'] for r in results]).mean()
+        gates = torch.cat([r['gate'].reshape(-1) for r in results])
+        residual_norms = torch.cat([r['residual_norm'] for r in results])
+        cosines = torch.cat([r['cosine'] for r in results])
+        pair_count = embeddings.new_tensor(float(pairs.size(0)))
+        return {
+            'loss_transport': transport_loss,
+            'loss_transport_cycle': cycle_loss,
+            'loss_transport_identity': identity_loss,
+            'transport_pair_count': pair_count.detach(),
+            'transport_gate_mean': gates.mean().detach(),
+            'transport_residual_norm_mean': residual_norms.mean().detach(),
+            'transport_cos_pos_mean': cosines.mean().detach(),
         }
 
 

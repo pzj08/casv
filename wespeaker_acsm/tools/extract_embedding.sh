@@ -32,9 +32,25 @@ gpus="[0,1]"
 . tools/parse_options.sh
 set -e
 
+if [ -z "${store_dir}" ]; then
+  echo "store_dir must be set" >&2
+  exit 1
+fi
+if [ -z "${wavs_num}" ]; then
+  echo "wavs_num must be set" >&2
+  exit 1
+fi
+
 embed_dir=${exp_dir}/embeddings/${store_dir}
 log_dir=${embed_dir}/log
 [ ! -d ${log_dir} ] && mkdir -p ${log_dir}
+
+rm -f "${embed_dir}"/xvector_*.ark \
+      "${embed_dir}"/xvector_*.scp \
+      "${embed_dir}"/xvector.scp \
+      "${embed_dir}"/mean_vec.npy \
+      "${embed_dir}"/extract.result \
+      "${log_dir}"/split_*
 
 # split the data_list file into sub_file, then we can use multi-gpus to extract embeddings
 data_num=$(wc -l ${data_list} | awk '{print $1}')
@@ -69,5 +85,6 @@ embed_num=$(wc -l ${embed_dir}/xvector.scp | awk '{print $1}')
 if [ $embed_num -eq $wavs_num ]; then
   echo "Successfully extract embedding for ${store_dir}" | tee ${embed_dir}/extract.result
 else
-  echo "Failed to extract embedding for ${store_dir}" | tee ${embed_dir}/extract.result
+  echo "Failed to extract embedding for ${store_dir}: expected ${wavs_num}, got ${embed_num}" | tee ${embed_dir}/extract.result
+  exit 1
 fi
